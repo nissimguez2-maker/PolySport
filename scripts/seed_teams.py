@@ -17,12 +17,22 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 # league slug in our schema -> TheSportsDB league name
+# Top-5 + extra European leagues whose clubs appear in UCL / Europa League
+# (needed so UEL/UCL-only names like SC Braga, Ajax, Galatasaray resolve).
 LEAGUES = {
     "epl":        "English Premier League",
     "seriea":     "Italian Serie A",
     "laliga":     "Spanish La Liga",
     "bundesliga": "German Bundesliga",
     "ligue1":     "French Ligue 1",
+    "primeira":   "Portuguese Primeira Liga",
+    "eredivisie": "Dutch Eredivisie",
+    "sueper":     "Turkish Super Lig",
+    "belgian":    "Belgian First Division A",
+    "scottish":   "Scottish Premiership",
+    "swiss":      "Swiss Super League",
+    "austrian":   "Austrian Bundesliga",
+    "greek":      "Greek Super League",
 }
 
 SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"

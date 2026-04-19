@@ -67,7 +67,7 @@ At each poll cycle, for each active match:
    - no existing position on this match
 6. Post GTC `post_only` maker limit, priced 0.5¢ inside the current best, on the underpriced side. Expire at T–5min.
 
-## Exit rule
+## Exit rule (hold track, primary)
 
 - **Default:** hold to settlement.
 - **Hybrid taker fallback:** at T–10min, if unfilled AND divergence still ≥ 2¢ AND Pinnacle
@@ -75,6 +75,32 @@ At each poll cycle, for each active match:
   maker, FOK taker at best. Otherwise cancel and skip.
 - **Early exit:** if Polymarket mid moves ≥5¢ against position AND Pinnacle confirms ≥3¢
   same direction → FOK taker exit.
+
+## Strategy variant: pre-match flip (Phase 2 parallel track)
+
+Runs alongside the hold track on the same entry signal. Whichever track the match qualifies
+for first fires; matches never hold both a flip and a hold position simultaneously.
+
+- **Entry:** identical to hold (|div| ≥ 2¢, spread ≤ 3¢, depth ≥ $500, Pinnacle fresh,
+  fav prob < 0.80, no existing position).
+- **Flip exit target:** immediately after the buy fills, post GTC `post_only` sell at
+  `entry_mid + 0.015`. Fill → +1.5¢/share realised, position closed, no settlement risk.
+- **Flip time stop:** at T–30min, if sell unfilled, cancel it and inherit hold-track exit rules.
+- **Flip stop-loss:** if Polymarket mid moves ≥ 2¢ *away* from fair AND Pinnacle confirms
+  ≥ 1¢ same direction → FOK taker exit (tighter than hold: flip is short-horizon, can't wait).
+
+Flip profitability depends on Polymarket mean-reverting toward Pinnacle before kickoff.
+`scripts/analyze_reversion.py` measures this directly from Phase 1 data; flip is only
+built into Phase 2 shadow if reversion data supports it.
+
+### Flip graduation gate (separate from hold)
+
+| Metric | Threshold |
+|---|---|
+| Flip shadow trade count | ≥ 250 |
+| Flip win rate (Wilson 95% CL lower bound) | ≥ 55% (higher bar — smaller per-trade edge) |
+| Flip fill-sim divergence | < 10% (tighter — exit fills dominate PnL) |
+| Flip median holding period | ≤ 90 min (sanity check — longer = not a flip) |
 
 ## Sizing
 
@@ -143,7 +169,7 @@ Median outcome is stall at Stage 3–4. Primary decay risk: Pinnacle CLV has bee
 |---|---|---|
 | 0 — Infra | Create repo, wipe Supabase, open new Claude project | Done when all three exist |
 | 1 — 48h sanity check | Standalone script logs Pinnacle + Polymarket divergences across all upcoming EPL/UCL matches for 48h. No trading. | ≥30% of monitored matches touch \|div\| ≥ 2¢ in T–120→0min window |
-| 2 — Shadow strategy | Full entry/exit/sizing logic in shadow mode. Honest-fill sim. Maker toxicity tracking. Accumulate 250 shadow trades. | All 8 graduation gate metrics green |
+| 2 — Shadow strategy | Full entry/exit/sizing in shadow for both hold and flip tracks. Honest-fill sim. Maker toxicity tracking. Accumulate 250 trades per track. | Hold: all 8 graduation metrics green. Flip: its own gate (see flip section). |
 | 3 — Live $5 stakes | First 50 live trades under strict 1.5σ monitoring | 50 live trades within 1.5σ of shadow expectation |
 | 4+ | Stage progression per sizing table | Bankroll thresholds |
 
@@ -157,7 +183,8 @@ Median outcome is stall at Stage 3–4. Primary decay risk: Pinnacle CLV has bee
   - `polysport/feeds/odds_api.py` — The Odds API client
   - `polysport/feeds/polymarket.py` — Polymarket CLOB + Gamma client
   - `polysport/math/devig.py` — power method 3-way de-vigging
-  - `polysport/strategy/moneyline.py` — entry/exit logic
+  - `polysport/strategy/moneyline.py` — entry/exit logic (hold track)
+  - `polysport/strategy/flip.py` — flip entry/exit logic (parallel track)
   - `polysport/execution/hybrid_maker.py` — post-only + FOK fallback
   - `polysport/sim/honest_fill.py` — honest-fill simulator for shadow mode
   - `polysport/monitoring/toxicity.py` — maker adverse-selection tracker
