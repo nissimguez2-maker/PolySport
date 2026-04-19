@@ -1,0 +1,13 @@
+# Railway deployment config for the PolySport Phase 1 logger.
+# Nixpacks auto-detects Python via requirements.txt. Python version is pinned
+# by .python-version.
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+# 45s interval > ~38s cycle time on Railway network = comfortable margin.
+# Locally the default 30s is fine; the override lives here so CLI dev stays quick.
+startCommand = "python -u scripts/phase1_logger.py --interval 45"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
