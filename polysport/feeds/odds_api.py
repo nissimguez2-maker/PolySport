@@ -54,6 +54,86 @@ class OddsEvent:
     raw: dict[str, Any]            # full API payload for Supabase logging
 
 
+@dataclass(frozen=True)
+class EventSummary:
+    """Schedule-only metadata from the free /events endpoint. No odds."""
+    event_id: str
+    sport_key: str
+    league_slug: str
+    commence_time: str
+    home_team_raw: str
+    away_team_raw: str
+
+
+def _quota_from(resp: httpx.Response) -> dict[str, str]:
+    return {
+        "remaining": resp.headers.get("x-requests-remaining", ""),
+        "used":      resp.headers.get("x-requests-used", ""),
+        "last":      resp.headers.get("x-requests-last", ""),
+    }
+
+
+def fetch_events_for_league(
+    client: httpx.Client,
+    *,
+    api_key: str,
+    league_slug: str,
+) -> tuple[list[EventSummary], dict[str, str]]:
+    """Free schedule scan: /sports/{sport}/events. x-requests-last should be 0.
+
+    Returns (events, quota_headers). Used for cheap discovery so the paid
+    /events/{id}/odds call only fires for matches inside the trade window.
+    """
+    sport_key = LEAGUE_TO_SPORT_KEY.get(league_slug)
+    if not sport_key:
+        raise ValueError(f"Unknown league slug for Odds API: {league_slug!r}")
+
+    resp = client.get(f"{ODDS_API_BASE}/sports/{sport_key}/events",
+                      params={"apiKey": api_key}, timeout=15.0)
+    resp.raise_for_status()
+
+    events = [EventSummary(
+        event_id      = raw["id"],
+        sport_key     = sport_key,
+        league_slug   = league_slug,
+        commence_time = raw["commence_time"],
+        home_team_raw = raw["home_team"],
+        away_team_raw = raw["away_team"],
+    ) for raw in resp.json()]
+    return events, _quota_from(resp)
+
+
+def fetch_odds_for_event(
+    client: httpx.Client,
+    *,
+    api_key: str,
+    sport_key: str,
+    event_id: str,
+    regions: str = "eu",
+    markets: str = "h2h",
+    odds_format: str = "decimal",
+    bookmakers: str | None = None,
+) -> tuple[OddsEvent, dict[str, str]]:
+    """Paid single-event odds: /events/{id}/odds. Costs markets × regions.
+
+    At h2h × eu that's 1 credit. Used per in-window match only, so spend
+    scales with match count, not wall-clock.
+    """
+    params: dict[str, str] = {
+        "apiKey":     api_key,
+        "regions":    regions,
+        "markets":    markets,
+        "oddsFormat": odds_format,
+    }
+    if bookmakers:
+        params["bookmakers"] = bookmakers
+
+    resp = client.get(f"{ODDS_API_BASE}/sports/{sport_key}/events/{event_id}/odds",
+                      params=params, timeout=15.0)
+    resp.raise_for_status()
+    return _parse_event(resp.json(), sport_key), _quota_from(resp)
+
+
 def fetch_odds_for_league(
     client: httpx.Client,
     *,
@@ -64,10 +144,10 @@ def fetch_odds_for_league(
     odds_format: str = "decimal",
     bookmakers: str | None = None, # comma-separated; None = all in region
 ) -> tuple[list[OddsEvent], dict[str, str]]:
-    """Fetch odds for one league. Returns (events, quota_headers).
+    """Legacy league-wide /odds call. Costs markets × regions × 1 (per league).
 
-    Raises ValueError for unknown league, httpx.HTTPStatusError for API errors.
-    Quota headers are passed through so the caller can log and alert on exhaustion.
+    Adaptive logger uses fetch_events_for_league + fetch_odds_for_event instead,
+    which only pays for in-window matches. Keep this for smoke tests / backfills.
     """
     sport_key = LEAGUE_TO_SPORT_KEY.get(league_slug)
     if not sport_key:
@@ -87,16 +167,10 @@ def fetch_odds_for_league(
                       params=params, timeout=15.0)
     resp.raise_for_status()
 
-    quota = {
-        "remaining": resp.headers.get("x-requests-remaining", ""),
-        "used":      resp.headers.get("x-requests-used", ""),
-        "last":      resp.headers.get("x-requests-last", ""),
-    }
-
     events: list[OddsEvent] = []
     for raw_ev in resp.json():
         events.append(_parse_event(raw_ev, sport_key))
-    return events, quota
+    return events, _quota_from(resp)
 
 
 def _parse_event(raw: dict[str, Any], sport_key: str) -> OddsEvent:

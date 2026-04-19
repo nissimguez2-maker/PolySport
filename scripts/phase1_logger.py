@@ -43,8 +43,10 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from polysport.feeds.matcher import TeamMatcher  # noqa: E402
 from polysport.feeds.odds_api import (  # noqa: E402
+    EventSummary,
     LEAGUE_TO_SPORT_KEY,
-    fetch_odds_for_league,
+    fetch_events_for_league,
+    fetch_odds_for_event,
 )
 from polysport.feeds.polymarket import (  # noqa: E402
     extract_moneyline_markets,
@@ -52,9 +54,10 @@ from polysport.feeds.polymarket import (  # noqa: E402
     list_league_events,
 )
 
-DEFAULT_LEAGUES = ["epl", "ucl", "ligue1"]
-POLL_INTERVAL_SEC = 30
-TIME_HORIZON_HOURS = 72          # only log events kicking off inside this window
+DEFAULT_LEAGUES = ["epl", "ucl", "ligue1", "seriea", "laliga", "bundesliga"]
+POLL_INTERVAL_SEC = 60
+TRADE_WINDOW_MIN = 120           # poll /events/{id}/odds only for matches kicking off within this many min
+SCHEDULE_SCAN_EVERY_SEC = 600    # free /events refresh cadence (10 min)
 QUOTA_WARN_THRESHOLD = 500       # warn once Odds API remaining drops below this
 
 # Strip trailing secondary-market tokens from Polymarket titles so the home/away
@@ -75,22 +78,24 @@ TITLE_PATTERN = re.compile(
 _stop = False
 
 
-def _inactive_sleep_seconds(tz: ZoneInfo, start_hour: int, end_hour: int) -> float:
-    """0 if currently inside active window; else seconds to the next start_hour.
+def _inactive_sleep_seconds(tz: ZoneInfo, start_hour: float, end_hour: float) -> float:
+    """0 if currently inside active window; else seconds to the next start.
 
-    Window semantics: [start_hour, end_hour) in local time, wrapping midnight if
-    start > end. start == end means always active.
+    Hours are floats so half-hour precision works (e.g. 22.5 = 22:30). Window
+    semantics: [start, end) in local time, wrapping midnight if start > end.
+    start == end means always active.
     """
     if start_hour == end_hour:
         return 0.0
     now = datetime.now(tz)
-    h = now.hour
+    h = now.hour + now.minute / 60.0 + now.second / 3600.0
     active = (start_hour <= h < end_hour) if start_hour < end_hour else (
         h >= start_hour or h < end_hour)
     if active:
         return 0.0
-    # Sleep until next occurrence of start_hour:00 local.
-    target = now.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+    start_h = int(start_hour)
+    start_m = int(round((start_hour - start_h) * 60))
+    target = now.replace(hour=start_h, minute=start_m, second=0, microsecond=0)
     if target <= now:
         target = target + timedelta(days=1)
     return (target - now).total_seconds()
@@ -118,43 +123,63 @@ def _parse_iso8601(s: str) -> datetime | None:
         return None
 
 
-def _within_horizon(commence: datetime | None, horizon_hours: int) -> bool:
-    if commence is None:
-        return False
-    now = datetime.now(timezone.utc)
-    return (commence - now) <= timedelta(hours=horizon_hours) and commence >= (now - timedelta(hours=3))
+def _minutes_to_kick(commence_iso: str) -> float | None:
+    ct = _parse_iso8601(commence_iso)
+    if ct is None:
+        return None
+    return (ct - datetime.now(timezone.utc)).total_seconds() / 60.0
 
 
-def poll_odds_api(sb, http: httpx.Client, matcher: TeamMatcher,
-                  api_key: str, league: str) -> tuple[int, dict[str, str]]:
-    """Fetch one league's odds, write snapshots, return (rows_written, quota)."""
-    events, quota = fetch_odds_for_league(http, api_key=api_key, league_slug=league)
-    rows = 0
-    for ev in events:
-        commence = _parse_iso8601(ev.commence_time)
-        if not _within_horizon(commence, TIME_HORIZON_HOURS):
+def _in_trade_window(commence_iso: str, window_min: int = TRADE_WINDOW_MIN) -> bool:
+    """True iff kickoff is within [0, window_min] minutes ahead."""
+    m = _minutes_to_kick(commence_iso)
+    return m is not None and 0.0 <= m <= window_min
+
+
+def poll_schedule(http: httpx.Client, api_key: str,
+                  leagues: list[str]) -> dict[str, list[EventSummary]]:
+    """Free schedule scan per league. Returns {league_slug: [EventSummary]}."""
+    out: dict[str, list[EventSummary]] = {}
+    for lg in leagues:
+        if lg not in LEAGUE_TO_SPORT_KEY:
             continue
-        home_id = _resolve(matcher, ev.home_team_raw, source="odds_api",
-                           league=league, extra={"event_id": ev.event_id})
-        away_id = _resolve(matcher, ev.away_team_raw, source="odds_api",
-                           league=league, extra={"event_id": ev.event_id})
+        try:
+            evs, quota = fetch_events_for_league(http, api_key=api_key, league_slug=lg)
+            last = quota.get("last", "?")
+            print(f"  [schedule   {lg:<10}] {len(evs):3d} fixtures  cost={last}", flush=True)
+            out[lg] = evs
+        except Exception as exc:  # noqa: BLE001
+            print(f"  [schedule {lg}] ERROR: {exc!r}", flush=True)
+            out[lg] = []
+    return out
 
-        for bm in ev.bookmakers:
-            sb.table("odds_api_snapshots").insert({
-                "event_id":      ev.event_id,
-                "league_key":    ev.sport_key,
-                "home_team_raw": ev.home_team_raw,
-                "away_team_raw": ev.away_team_raw,
-                "home_team_id":  home_id,
-                "away_team_id":  away_id,
-                "commence_time": ev.commence_time,
-                "bookmaker":     bm.bookmaker,
-                "odds_home":     bm.odds_home,
-                "odds_draw":     bm.odds_draw,
-                "odds_away":     bm.odds_away,
-                "raw":           ev.raw,
-            }).execute()
-            rows += 1
+
+def poll_event_odds(sb, http: httpx.Client, matcher: TeamMatcher,
+                    api_key: str, ev: EventSummary) -> tuple[int, dict[str, str]]:
+    """Paid per-event odds poll for one in-window match."""
+    odds_ev, quota = fetch_odds_for_event(http, api_key=api_key,
+                                          sport_key=ev.sport_key, event_id=ev.event_id)
+    home_id = _resolve(matcher, odds_ev.home_team_raw, source="odds_api",
+                       league=ev.league_slug, extra={"event_id": ev.event_id})
+    away_id = _resolve(matcher, odds_ev.away_team_raw, source="odds_api",
+                       league=ev.league_slug, extra={"event_id": ev.event_id})
+    rows = 0
+    for bm in odds_ev.bookmakers:
+        sb.table("odds_api_snapshots").insert({
+            "event_id":      odds_ev.event_id,
+            "league_key":    odds_ev.sport_key,
+            "home_team_raw": odds_ev.home_team_raw,
+            "away_team_raw": odds_ev.away_team_raw,
+            "home_team_id":  home_id,
+            "away_team_id":  away_id,
+            "commence_time": odds_ev.commence_time,
+            "bookmaker":     bm.bookmaker,
+            "odds_home":     bm.odds_home,
+            "odds_draw":     bm.odds_draw,
+            "odds_away":     bm.odds_away,
+            "raw":           odds_ev.raw,
+        }).execute()
+        rows += 1
     return rows, quota
 
 
@@ -231,28 +256,50 @@ def _resolve(matcher: TeamMatcher, raw: str, *, source: str, league: str,
 
 
 def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
-              api_key: str, leagues: list[str]) -> None:
+              api_key: str, leagues: list[str],
+              schedule: dict[str, list[EventSummary]]) -> None:
+    """Per-cycle work: poll /events/{id}/odds for every match in T-120 window,
+    then Polymarket (free) for leagues that have any in-window match.
+    """
     started = time.monotonic()
-    for lg in leagues:
-        if lg not in LEAGUE_TO_SPORT_KEY:
-            print(f"  [odds_api {lg}] SKIPPED — no Odds API sport_key mapped", flush=True)
-        else:
+    in_window: dict[str, list[EventSummary]] = {
+        lg: [ev for ev in schedule.get(lg, []) if _in_trade_window(ev.commence_time)]
+        for lg in leagues
+    }
+    total_in_window = sum(len(v) for v in in_window.values())
+    if total_in_window == 0:
+        print(f"  [idle] no matches in T-{TRADE_WINDOW_MIN}m window across "
+              f"{len(leagues)} leagues — skipping paid calls.", flush=True)
+
+    last_quota_remaining = "?"
+    for lg, evs in in_window.items():
+        if not evs:
+            continue
+        for ev in evs:
+            mins = _minutes_to_kick(ev.commence_time) or 0.0
             try:
-                n, quota = poll_odds_api(sb, http, matcher, api_key, lg)
-                rem = quota.get("remaining", "?")
-                warn = "  ⚠ LOW QUOTA" if (rem.isdigit() and int(rem) < QUOTA_WARN_THRESHOLD) else ""
-                print(f"  [odds_api {lg:<10}] wrote {n:3d} rows  quota_remaining={rem}{warn}", flush=True)
+                n, quota = poll_event_odds(sb, http, matcher, api_key, ev)
+                last_quota_remaining = quota.get("remaining", "?")
+                print(f"  [odds_api {lg:<10}] {ev.home_team_raw} vs "
+                      f"{ev.away_team_raw}  T-{mins:4.0f}m  "
+                      f"wrote {n} rows  quota_remaining={last_quota_remaining}",
+                      flush=True)
             except Exception as exc:  # noqa: BLE001
-                print(f"  [odds_api {lg}] ERROR: {exc!r}", flush=True)
+                print(f"  [odds_api {lg}] ERROR on {ev.event_id}: {exc!r}", flush=True)
                 traceback.print_exc()
+
         try:
             n = poll_polymarket(sb, http, matcher, lg)
             print(f"  [polymarket {lg:<8}] wrote {n:3d} rows", flush=True)
         except Exception as exc:  # noqa: BLE001
             print(f"  [polymarket {lg}] ERROR: {exc!r}", flush=True)
             traceback.print_exc()
+
+    if last_quota_remaining.isdigit() and int(last_quota_remaining) < QUOTA_WARN_THRESHOLD:
+        print(f"  ⚠ LOW QUOTA: {last_quota_remaining} remaining", flush=True)
     dur = time.monotonic() - started
-    print(f"cycle done in {dur:5.1f}s", flush=True)
+    print(f"cycle done in {dur:5.1f}s  "
+          f"(polled {total_in_window} events)", flush=True)
 
 
 def main() -> int:
@@ -268,12 +315,17 @@ def main() -> int:
                         help="Total run time in hours. Script exits 0 when exceeded. "
                              "Default 48 matches STRATEGY.md Phase 1 sanity-check scope. "
                              "Set to 0 for unlimited (ops only — will burn quota).")
-    parser.add_argument("--active-hours-start", type=int, default=12,
-                        help="Hour (0–23) in --timezone at which polling resumes. "
-                             "Default 12 (noon) — covers EU match windows.")
-    parser.add_argument("--active-hours-end", type=int, default=24,
-                        help="Hour (0–24) in --timezone at which polling pauses. "
-                             "Default 24 (midnight). If start==end, always active.")
+    parser.add_argument("--active-hours-start", type=float, default=14.0,
+                        help="Hour (0–23.99, may be fractional) in --timezone at which "
+                             "polling resumes. Default 14.0 (14:00) — EU evening kickoffs.")
+    parser.add_argument("--active-hours-end", type=float, default=22.5,
+                        help="Hour (0–24, may be fractional) in --timezone at which "
+                             "polling pauses. Default 22.5 (22:30). "
+                             "If start==end, always active.")
+    parser.add_argument("--schedule-scan-every", type=int,
+                        default=SCHEDULE_SCAN_EVERY_SEC,
+                        help=f"Seconds between free /events refreshes. "
+                             f"Default {SCHEDULE_SCAN_EVERY_SEC}.")
     parser.add_argument("--timezone", default="Asia/Jerusalem",
                         help="IANA timezone for active-hours gate. Default Asia/Jerusalem.")
     args = parser.parse_args()
@@ -291,9 +343,15 @@ def main() -> int:
     matcher = TeamMatcher(sb)
     _install_sigterm_handler()
 
-    print(f"Phase 1 logger starting. leagues={args.leagues} interval={args.interval}s "
-          f"horizon={TIME_HORIZON_HOURS}h duration={args.duration_hours}h "
-          f"active={args.active_hours_start:02d}:00–{args.active_hours_end:02d}:00 "
+    def _fmt_hm(h: float) -> str:
+        hh = int(h)
+        mm = int(round((h - hh) * 60))
+        return f"{hh:02d}:{mm:02d}"
+
+    print(f"Phase 1 logger starting. leagues={args.leagues} "
+          f"interval={args.interval}s schedule-scan-every={args.schedule_scan_every}s "
+          f"trade-window={TRADE_WINDOW_MIN}m duration={args.duration_hours}h "
+          f"active={_fmt_hm(args.active_hours_start)}–{_fmt_hm(args.active_hours_end)} "
           f"{args.timezone} once={args.once}", flush=True)
     run_deadline = (time.monotonic() + args.duration_hours * 3600.0
                     if args.duration_hours > 0 else None)
@@ -305,8 +363,12 @@ def main() -> int:
         timeout=httpx.Timeout(15.0, connect=5.0),
     ) as http:
         if args.once:
-            one_cycle(sb, http, matcher, api_key, args.leagues)
+            schedule = poll_schedule(http, api_key, args.leagues)
+            one_cycle(sb, http, matcher, api_key, args.leagues, schedule)
             return 0
+
+        schedule: dict[str, list[EventSummary]] = {}
+        last_scan_at = 0.0
 
         while not _stop:
             if run_deadline is not None and time.monotonic() >= run_deadline:
@@ -317,16 +379,18 @@ def main() -> int:
             sleep_to_next_active = _inactive_sleep_seconds(
                 tz, args.active_hours_start, args.active_hours_end)
             if sleep_to_next_active > 0:
+                start_h = int(args.active_hours_start)
+                start_m = int(round((args.active_hours_start - start_h) * 60))
                 wake_local = datetime.now(tz).replace(
-                    hour=args.active_hours_start, minute=0, second=0, microsecond=0)
+                    hour=start_h, minute=start_m, second=0, microsecond=0)
                 if wake_local <= datetime.now(tz):
                     wake_local = wake_local + timedelta(days=1)
                 print(f"\n[idle] outside active window "
-                      f"{args.active_hours_start:02d}:00–{args.active_hours_end:02d}:00 "
+                      f"{_fmt_hm(args.active_hours_start)}–"
+                      f"{_fmt_hm(args.active_hours_end)} "
                       f"{args.timezone}. Sleeping {sleep_to_next_active/60:.0f} min "
                       f"until {wake_local.strftime('%Y-%m-%d %H:%M %Z')}.",
                       flush=True)
-                # Sleep in 60-second slices so SIGTERM preempts fast.
                 deadline = time.monotonic() + sleep_to_next_active
                 while not _stop and time.monotonic() < deadline:
                     if run_deadline is not None and time.monotonic() >= run_deadline:
@@ -334,10 +398,17 @@ def main() -> int:
                     time.sleep(min(60.0, deadline - time.monotonic()))
                 continue
 
+            now_mono = time.monotonic()
+            if not schedule or (now_mono - last_scan_at) >= args.schedule_scan_every:
+                print(f"\n--- schedule scan @ {datetime.now(timezone.utc).isoformat()} ---",
+                      flush=True)
+                schedule = poll_schedule(http, api_key, args.leagues)
+                last_scan_at = now_mono
+
             cycle_start = time.monotonic()
             print(f"\n--- cycle @ {datetime.now(timezone.utc).isoformat()} ---",
                   flush=True)
-            one_cycle(sb, http, matcher, api_key, args.leagues)
+            one_cycle(sb, http, matcher, api_key, args.leagues, schedule)
             elapsed = time.monotonic() - cycle_start
             if elapsed > args.interval:
                 print(f"WARN: cycle took {elapsed:.1f}s > interval {args.interval}s "
