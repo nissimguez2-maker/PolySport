@@ -14,7 +14,7 @@ from polysport.math.devig import devig_3way
 
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 RECENT_WINDOW = timedelta(minutes=10)
-UPCOMING_HORIZON = timedelta(hours=72)
+UPCOMING_HORIZON = timedelta(days=7)
 PAST_HORIZON = timedelta(hours=4)
 
 # STRATEGY.md entry gates, cents as floats.

@@ -52,7 +52,7 @@ from polysport.feeds.polymarket import (  # noqa: E402
     list_league_events,
 )
 
-DEFAULT_LEAGUES = ["epl", "ucl"]
+DEFAULT_LEAGUES = ["epl", "ucl", "ligue1"]
 POLL_INTERVAL_SEC = 30
 TIME_HORIZON_HOURS = 72          # only log events kicking off inside this window
 QUOTA_WARN_THRESHOLD = 500       # warn once Odds API remaining drops below this
