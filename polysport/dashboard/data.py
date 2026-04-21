@@ -140,13 +140,17 @@ def get_live_state(sb) -> dict:
     except Exception:  # noqa: BLE001
         quota = None
 
+    # Pinnacle's commence_time jitters minute-to-minute for a match that's
+    # about to start, so keying dedup on (home, away, commence_time) treats
+    # each jittered value as a separate match. The query is bounded to a
+    # 7d-future / 4h-past window, so a same-team pairing collision is
+    # effectively impossible; keying on (home, away) alone is safe.
+    # pin_rows is ordered polled_at desc → first entry wins = latest poll.
     pin_by_match: dict[tuple, dict] = {}
     for r in pin_rows:
-        kt = _parse_ts(r["commence_time"])
-        if not kt:
+        if not _parse_ts(r["commence_time"]):
             continue
-        key = (r["home_team_id"], r["away_team_id"],
-               kt.replace(second=0, microsecond=0))
+        key = (r["home_team_id"], r["away_team_id"])
         if key not in pin_by_match:
             pin_by_match[key] = r
 
@@ -157,9 +161,16 @@ def get_live_state(sb) -> dict:
             pm_by_outcome[key] = r
 
     match_rows: list[MatchRow] = []
-    for (home_id, away_id, _), pin in pin_by_match.items():
+    for (home_id, away_id), pin in pin_by_match.items():
         kt = _parse_ts(pin["commence_time"])
         polled_pin = _parse_ts(pin["polled_at"])
+
+        # Phase 1 only trades the T−120 → T−0 window. After kickoff Pinnacle
+        # stops updating pre-match odds, so pin_age_sec grows unboundedly and
+        # the row is not actionable. Hide them from the dashboard entirely.
+        minutes_to_kick = (kt - now).total_seconds() / 60.0
+        if minutes_to_kick < 0:
+            continue
 
         try:
             fair = devig_3way(float(pin["odds_home"]),
@@ -205,7 +216,6 @@ def get_live_state(sb) -> dict:
         if signed_divs:
             best_side, best_div = max(signed_divs, key=lambda kv: kv[1])
 
-        minutes_to_kick = (kt - now).total_seconds() / 60.0
         row = MatchRow(
             kickoff_local=kt.astimezone(ISRAEL_TZ).strftime("%a %d %b %H:%M"),
             minutes_to_kick=minutes_to_kick,
@@ -253,7 +263,7 @@ def get_live_state(sb) -> dict:
     n_expected = len(pin_by_match)
     n_matched = 0
     n_incomplete = 0
-    for (home_id, away_id, _) in pin_by_match:
+    for (home_id, away_id) in pin_by_match:
         sides_present = sum(
             1 for side in ("home", "draw", "away")
             if (home_id, away_id, side) in pm_by_outcome
