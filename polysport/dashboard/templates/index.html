@@ -3,7 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0e1210">
   <title>PolySport — live</title>
+
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none' stroke='%234eba6f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><circle cx='14' cy='14' r='12'/><polygon points='14,7 17.5,10 16.5,14.5 11.5,14.5 10.5,10'/><line x1='10.5' y1='10' x2='7' y2='13'/><line x1='17.5' y1='10' x2='21' y2='13'/><line x1='11.5' y1='14.5' x2='10' y2='18.5'/><line x1='16.5' y1='14.5' x2='18' y2='18.5'/><line x1='10' y1='18.5' x2='18' y2='18.5'/></svg>">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -115,6 +118,18 @@
     .league-other { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
 
     /* ─── KPI tiles ──────────────────────────────────────────────────── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (max-width: 1200px) {
+      .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
     .kpi {
       background: var(--surface);
       border: 1px solid var(--border);
