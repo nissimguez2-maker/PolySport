@@ -1,9 +1,21 @@
 # Polymarket production gotchas
 
-Operational constraints that fail silently if missed. Verified 2026-04-19 against
-`MrFadiAi/Polymarket-bot` production code.
+Operational constraints that fail silently if missed. Re-verified 2026-04-21
+against current codebase; items that are already handled in code are marked ✅
+with a pointer to the handling code. Items still to action live through Phase
+2 live-order work are marked ⬜.
 
-## 1. USDC.e only — native USDC silently fails
+## 0. Gamma `clobTokenIds` is sometimes a JSON-encoded string ✅
+
+The Gamma `/events` payload returns each market's `clobTokenIds` as either a
+proper JSON list OR a stringified JSON array (e.g. `"[\"123\", \"456\"]"`).
+Treating both cases identically is necessary or moneyline parsing silently
+drops markets.
+
+Handled in [polysport/feeds/polymarket.py](polysport/feeds/polymarket.py#L112-L117)
+(`extract_moneyline_markets` — `json.loads` fallback on the string form).
+
+## 1. USDC.e only — native USDC silently fails ⬜ (Phase 2)
 
 Polymarket's CTF (Conditional Token Framework) contract **only accepts bridged
 USDC.e**. Native USDC looks fine in the wallet balance but all contract calls
@@ -19,7 +31,7 @@ CTF contract (Polygon mainnet): `0x4D97DCd97eC945f40cF65F87097ACe5EA0476045`
 **Action at funding time:** verify the funded token is USDC.e. If it's native
 USDC, swap to USDC.e on-chain before attempting any trade.
 
-## 2. Order minimums — enforce before send, not after reject
+## 2. Order minimums — enforce before send, not after reject ⬜ (Phase 2)
 
 Every CLOB order must satisfy **both**:
 
@@ -50,9 +62,33 @@ cheap and must exist before any real order goes out.
 | CLOB (orders + books) | `https://clob.polymarket.com` |
 | Gamma (event metadata) | `https://gamma-api.polymarket.com` |
 
+## 4. Polymarket tag slugs are not stable ✅
+
+Polymarket tags the same league under multiple slugs (`champions-league`,
+`uefa-champions-league`, `ucl`) and drifts over time. Querying a single slug
+misses events.
+
+Handled in [polysport/feeds/polymarket.py:29-38](polysport/feeds/polymarket.py#L29-L38)
+(`LEAGUE_TAG_ALIASES` + `list_league_events` dedupe across all aliases). Add a
+new slug here the moment a spot-check shows a missing event.
+
+## 5. Incomplete-moneyline events should never half-match ✅
+
+Polymarket occasionally reshapes question text ("Will <team> win on <date>"
+vs "… end in a draw"). If our regex only recognises 2 of the 3 sides, we must
+return **nothing** and surface the event for manual fix — never log a
+partial book.
+
+Handled in [polysport/feeds/polymarket.py:147-149](polysport/feeds/polymarket.py#L147-L149)
+(`extract_moneyline_markets` returns `[]` unless all three sides resolve). The
+dashboard surfaces an "incomplete markets" counter; if it ever goes above 0,
+grep for the event ID in logger output and update `_QUESTION_WIN_PATTERN`.
+
 ## When to revisit
 
 - Before first live order: re-verify addresses against Polymarket docs
   (contracts migrate occasionally).
 - When onboarding a new wallet: confirm USDC.e balance specifically.
 - If CLOB returns unexpected rejections: check min-order thresholds first.
+- If Polymarket question phrasing shifts: update the regex in
+  `polysport/feeds/polymarket.py`, don't loosen the "all 3 sides or skip" gate.

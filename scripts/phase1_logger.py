@@ -276,6 +276,25 @@ def _resolve(matcher: TeamMatcher, raw: str, *, source: str, league: str,
     return r.team_id if r else None
 
 
+def _persist_quota(sb, quota: dict[str, str]) -> None:
+    """Upsert latest Odds API quota headers into the singleton odds_api_quota row.
+
+    Non-fatal — the logger must not crash if the table is absent (e.g. migration
+    not yet applied) or if a header is missing.
+    """
+    try:
+        payload = {
+            "id":         1,
+            "remaining":  int(quota["remaining"]) if quota.get("remaining", "").isdigit() else None,
+            "used":       int(quota["used"])      if quota.get("used", "").isdigit()      else None,
+            "last_cost":  int(quota["last"])      if quota.get("last", "").isdigit()      else None,
+            "updated_at": "now()",
+        }
+        sb.table("odds_api_quota").upsert(payload).execute()
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [quota persist] WARN: {exc!r}", flush=True)
+
+
 def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
               api_key: str, leagues: list[str],
               schedule: dict[str, list[EventSummary]]) -> None:
@@ -304,6 +323,7 @@ def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
             try:
                 n, quota = poll_event_odds(sb, http, matcher, api_key, ev)
                 last_quota_remaining = quota.get("remaining", "?")
+                _persist_quota(sb, quota)
                 print(f"  [odds_api {lg:<10}] {ev.home_team_raw} vs "
                       f"{ev.away_team_raw}  T-{mins:4.0f}m  "
                       f"wrote {n} rows  quota_remaining={last_quota_remaining}",

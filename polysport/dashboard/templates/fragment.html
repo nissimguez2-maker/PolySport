@@ -1,11 +1,10 @@
-{# KPI tile strip #}
+{# KPI strip #}
 <div class="row g-3 mb-4">
   <div class="col-md-2 col-6">
     <div class="kpi">
       <div class="kpi-label">Logger</div>
-      <div class="kpi-value {% if state.logger_healthy %}text-success{% else %}text-danger{% endif %}">
-        <span class="pulse {% if not state.logger_healthy %}dead{% endif %}"></span>
-        {{ 'OK' if state.logger_healthy else 'STALE' }}
+      <div class="kpi-value {% if state.logger_healthy %}good{% else %}bad{% endif %}">
+        <span class="pulse {% if not state.logger_healthy %}dead{% endif %}"></span>{{ 'OK' if state.logger_healthy else 'STALE' }}
       </div>
       <div class="kpi-sub">
         {% if state.last_poll_age_sec is not none %}
@@ -19,26 +18,29 @@
 
   <div class="col-md-2 col-6">
     <div class="kpi">
-      <div class="kpi-label">Matches tracked</div>
-      <div class="kpi-value">{{ state.n_matches }}</div>
-      <div class="kpi-sub">across next 7 days</div>
+      <div class="kpi-label">Matcher join</div>
+      {% set match_bad = state.n_expected > 0 and state.n_matched < state.n_expected %}
+      <div class="kpi-value {% if state.n_expected == 0 %}{% elif match_bad %}caution{% else %}good{% endif %}">
+        {{ state.n_matched }} / {{ state.n_expected }}
+      </div>
+      <div class="kpi-sub">Pinnacle → Polymarket joined</div>
     </div>
   </div>
 
   <div class="col-md-2 col-6">
     <div class="kpi">
       <div class="kpi-label">In trade window</div>
-      <div class="kpi-value {% if state.n_in_window > 0 %}text-warning{% endif %}">
+      <div class="kpi-value {% if state.n_in_window > 0 %}caution{% endif %}">
         {{ state.n_in_window }}
       </div>
-      <div class="kpi-sub">T−120→0min</div>
+      <div class="kpi-sub">T−120 → 0 min</div>
     </div>
   </div>
 
   <div class="col-md-2 col-6">
     <div class="kpi">
       <div class="kpi-label">Would fire now</div>
-      <div class="kpi-value {% if state.n_would_fire > 0 %}text-success{% endif %}">
+      <div class="kpi-value {% if state.n_would_fire > 0 %}good{% endif %}">
         {{ state.n_would_fire }}
       </div>
       <div class="kpi-sub">all gates pass</div>
@@ -48,7 +50,7 @@
   <div class="col-md-2 col-6">
     <div class="kpi">
       <div class="kpi-label">Best gap now</div>
-      <div class="kpi-value {% if state.best_gap_cents >= state.entry_div_cents %}text-success{% elif state.best_gap_cents > 0 %}text-warning{% endif %}">
+      <div class="kpi-value {% if state.best_gap_cents >= state.entry_div_cents %}good{% elif state.best_gap_cents > 0 %}caution{% endif %}">
         {{ '%+.2f'|format(state.best_gap_cents) }}¢
       </div>
       <div class="kpi-sub">max signed div</div>
@@ -58,7 +60,7 @@
   <div class="col-md-2 col-6">
     <div class="kpi">
       <div class="kpi-label">Unresolved names</div>
-      <div class="kpi-value {% if state.unresolved_count > 0 %}text-danger{% else %}text-success{% endif %}">
+      <div class="kpi-value {% if state.unresolved_count > 0 %}bad{% else %}good{% endif %}">
         {{ state.unresolved_count }}
       </div>
       <div class="kpi-sub">should be 0</div>
@@ -66,104 +68,199 @@
   </div>
 </div>
 
-{# Matches #}
-<div class="section-title">
-  <span>Live matches</span>
-  <span class="muted"> · server time (IL) {{ state.now_local }} · refreshes every 15s</span>
+<div class="row g-3 mb-4">
+  <div class="col-md-3 col-6">
+    <div class="kpi">
+      <div class="kpi-label">Incomplete markets</div>
+      <div class="kpi-value {% if state.n_incomplete_markets > 0 %}bad{% else %}good{% endif %}">
+        {{ state.n_incomplete_markets }}
+      </div>
+      <div class="kpi-sub">should be 0 — else PM regex drift</div>
+    </div>
+  </div>
+
+  <div class="col-md-3 col-6">
+    <div class="kpi">
+      <div class="kpi-label">Odds API quota</div>
+      {% if state.quota_remaining is not none %}
+        {% set q_caution = state.quota_remaining < 2000 %}
+        {% set q_bad     = state.quota_remaining < 500 %}
+        <div class="kpi-value {% if q_bad %}bad{% elif q_caution %}caution{% else %}good{% endif %}">
+          {{ '{:,}'.format(state.quota_remaining) }}
+        </div>
+        <div class="kpi-sub">
+          {{ '{:,}'.format(state.quota_used or 0) }} used ·
+          {% if state.quota_days_remaining is not none %}
+            ~{{ '%.0f'|format(state.quota_days_remaining) }}d at current burn
+          {% else %}
+            burn rate unknown
+          {% endif %}
+        </div>
+      {% else %}
+        <div class="kpi-value">—</div>
+        <div class="kpi-sub">no quota row yet · logger will write after next paid call</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-md-3 col-6">
+    <div class="kpi">
+      <div class="kpi-label">Total fixtures</div>
+      <div class="kpi-value">{{ state.n_matches }}</div>
+      <div class="kpi-sub">across next 7 days</div>
+    </div>
+  </div>
+</div>
+
+{# Section bar #}
+<div class="section-bar">
+  <span class="section-label">Live matches</span>
+  <span class="section-meta">server time (IL) {{ state.now_local }} · refreshes every 15s</span>
 </div>
 
 {% if state.matches %}
-<div class="card table-card">
+{% set league_map = {
+  'soccer_epl':                   ['epl', 'EPL'],
+  'soccer_uefa_champs_league':    ['ucl', 'UCL'],
+  'soccer_uefa_europa_league':    ['other', 'UEL'],
+  'soccer_france_ligue_one':      ['l1',  'Ligue 1'],
+  'soccer_italy_serie_a':         ['sa',  'Serie A'],
+  'soccer_spain_la_liga':         ['ll',  'La Liga'],
+  'soccer_germany_bundesliga':    ['bl',  'Bundesliga']
+} %}
+<div class="matches-card">
 <div class="table-responsive">
-<table class="table table-dark table-hover mb-0 align-middle">
+<table class="matches">
 <thead>
   <tr>
     <th>Kickoff (IL)</th>
     <th>T</th>
+    <th>Pin age</th>
     <th>League</th>
     <th>Match</th>
-    <th class="text-end">Fair H / D / A</th>
-    <th class="text-end">Mid H / D / A</th>
-    <th class="text-end">Spread ¢</th>
-    <th class="text-end">Depth $</th>
-    <th class="text-end">Div (¢) H / D / A</th>
-    <th class="text-end">Best</th>
+    <th class="end">Fair H / D / A</th>
+    <th class="end">Mid H / D / A</th>
+    <th class="end">Spread ¢</th>
+    <th class="end">Depth $</th>
+    <th class="end">Div ¢ H / D / A</th>
+    <th class="end">Best</th>
     <th>Signal</th>
-    <th class="text-end">Age</th>
   </tr>
 </thead>
 <tbody>
 {% for m in state.matches %}
-<tr class="{% if m.in_window %}row-window{% endif %}">
-  <td class="text-nowrap">{{ m.kickoff_local }}</td>
-  <td><code class="t-code">{{ state.fmt_t(m.minutes_to_kick) }}</code></td>
-  <td><span class="league">{{ m.league }}</span></td>
-  <td class="text-nowrap"><strong>{{ m.home }}</strong> <span class="muted">vs</span> <strong>{{ m.away }}</strong></td>
-  <td class="text-end">
-    {{ '%.3f'|format(m.outcomes.home.fair) }}
-    <span class="muted">/</span> {{ '%.3f'|format(m.outcomes.draw.fair) }}
-    <span class="muted">/</span> {{ '%.3f'|format(m.outcomes.away.fair) }}
-  </td>
-  <td class="text-end">
-    {%- for side in ['home', 'draw', 'away'] -%}
-      {%- set o = m.outcomes[side] -%}
-      {%- if o.mid is not none -%}{{ '%.3f'|format(o.mid) }}{%- else -%}<span class="muted">—</span>{%- endif -%}
-      {%- if not loop.last %} <span class="muted">/</span> {% endif -%}
-    {%- endfor -%}
-  </td>
-  <td class="text-end">
-    {%- for side in ['home', 'draw', 'away'] -%}
-      {%- set o = m.outcomes[side] -%}
-      {%- if o.spread is not none -%}
-        <span class="{% if o.spread > 0.03 %}text-warning{% endif %}">{{ '%.1f'|format(o.spread * 100) }}</span>
-      {%- else -%}<span class="muted">—</span>{%- endif -%}
-      {%- if not loop.last %} <span class="muted">/</span> {% endif -%}
-    {%- endfor -%}
-  </td>
-  <td class="text-end">
-    {%- for side in ['home', 'draw', 'away'] -%}
-      {%- set o = m.outcomes[side] -%}
-      {%- if o.depth_min_usd is not none -%}
-        <span class="{% if o.depth_min_usd < 500 %}text-warning{% endif %}">${{ '%.0f'|format(o.depth_min_usd) }}</span>
-      {%- else -%}<span class="muted">—</span>{%- endif -%}
-      {%- if not loop.last %} <span class="muted">/</span> {% endif -%}
-    {%- endfor -%}
-  </td>
-  <td class="text-end">
-    {%- for side in ['home', 'draw', 'away'] -%}
-      {%- set o = m.outcomes[side] -%}
-      {%- if o.div is not none -%}
-        <span class="{{ 'div-pos' if o.div > 0 else 'div-neg' }}{{ ' div-big' if o.div|abs >= 0.02 else '' }}">
-          {{ '%+.2f'|format(o.div * 100) }}
-        </span>
-      {%- else -%}<span class="muted">—</span>{%- endif -%}
-      {%- if not loop.last %} <span class="muted">/</span> {% endif -%}
-    {%- endfor -%}
-  </td>
-  <td class="text-end">
-    {% if m.best_side %}
-      <div class="best-num {% if m.best_div_cents >= 2 %}div-big div-pos{% elif m.best_div_cents > 0 %}div-pos{% else %}div-neg{% endif %}">
-        {{ '%+.2f'|format(m.best_div_cents) }}¢
-      </div>
-      <small class="muted">{{ m.best_side }}</small>
-    {% else %}<span class="muted">—</span>{% endif %}
-  </td>
+  {% set parts = m.kickoff_local.rsplit(' ', 1) %}
+  {% set key = m.league|lower %}
+  {% set league_info = league_map.get(key, ['other', m.league.replace('soccer_', '').replace('_', ' ').title()]) %}
+  {% set t_class = 'window' if m.in_window else ('live' if m.minutes_to_kick < 0 else 'pre') %}
+  {% set row_classes = [] %}
+  {% if m.in_window %}{% set _ = row_classes.append('in-window') %}{% endif %}
+  {% if m.action_kind == 'buy' %}{% set _ = row_classes.append('buy') %}{% endif %}
+<tr class="{{ ' '.join(row_classes) }}">
   <td>
-    {% if m.action_kind == 'buy' %}
-      <span class="chip chip-buy">BUY {{ m.action_side | upper }}</span>
-    {% elif m.action_kind == 'sell' %}
-      <span class="chip chip-sell">SELL {{ m.action_side | upper }}</span>
+    <div class="kickoff-date">{{ parts[0] }}</div>
+    <div class="kickoff-time">{{ parts[1] if parts|length > 1 else '' }}</div>
+  </td>
+  <td><span class="t-pill {{ t_class }}">{{ state.fmt_t(m.minutes_to_kick) }}</span></td>
+  <td>
+    {%- set age = m.pin_age_sec -%}
+    {%- if age is none -%}
+      <span class="t-pill pre">—</span>
+    {%- elif age < 30 -%}
+      <span class="t-pill" style="background:rgba(78,186,111,0.1);color:var(--green);border:1px solid rgba(78,186,111,0.25)">{{ '%.0f'|format(age) }}s</span>
+    {%- elif age < state.pinnacle_stale_sec -%}
+      <span class="t-pill window">{{ '%.0f'|format(age) }}s</span>
+    {%- else -%}
+      <span class="t-pill live">{{ '%.0f'|format(age) }}s</span>
+    {%- endif -%}
+  </td>
+  <td><span class="league league-{{ league_info[0] }}">{{ league_info[1] }}</span></td>
+  <td>
+    <span class="team-home">{{ m.home }}</span>
+    <span class="vs-sep">vs</span>
+    <span class="team-away">{{ m.away }}</span>
+  </td>
+
+  {# Fair H/D/A stacked #}
+  <td class="end stack">
+    <div>{{ '%.3f'|format(m.outcomes.home.fair) }}</div>
+    <div class="dim">{{ '%.3f'|format(m.outcomes.draw.fair) }}</div>
+    <div>{{ '%.3f'|format(m.outcomes.away.fair) }}</div>
+  </td>
+
+  {# Mid H/D/A stacked #}
+  <td class="end stack">
+    {% for side in ['home', 'draw', 'away'] %}
+      {% set o = m.outcomes[side] %}
+      <div class="{% if side == 'draw' %}dim{% endif %}">
+        {% if o.mid is not none %}{{ '%.3f'|format(o.mid) }}{% else %}<span class="muted">—</span>{% endif %}
+      </div>
+    {% endfor %}
+  </td>
+
+  {# Spread — single dominant value (home's). Fall back to first non-null. #}
+  {% set spread_val = m.outcomes.home.spread if m.outcomes.home.spread is not none
+     else (m.outcomes.draw.spread if m.outcomes.draw.spread is not none else m.outcomes.away.spread) %}
+  <td class="end">
+    {% if spread_val is not none %}
+      <span class="spread-cell {% if spread_val > 0.015 %}wide{% endif %}">{{ '%.1f'|format(spread_val * 100) }}</span>
     {% else %}
-      <span class="chip chip-skip" title="{{ m.action_reason }}">SKIP</span>
-      <small class="muted d-block mt-1">{{ m.action_reason }}</small>
+      <span class="spread-cell">—</span>
     {% endif %}
   </td>
-  <td class="text-end muted">
-    <small>
-      {% if m.pin_age_sec is not none %}pin {{ '%.0f'|format(m.pin_age_sec) }}s{% else %}pin —{% endif %}<br>
-      {% set pm_age = (m.outcomes.home.pm_age_sec or m.outcomes.draw.pm_age_sec or m.outcomes.away.pm_age_sec) %}
-      {% if pm_age is not none %}pm {{ '%.0f'|format(pm_age) }}s{% else %}pm —{% endif %}
-    </small>
+
+  {# Depth stacked #}
+  <td class="end stack">
+    {% for side in ['home', 'draw', 'away'] %}
+      {% set o = m.outcomes[side] %}
+      <div>
+        {% if o.depth_min_usd is not none %}
+          <span class="{% if o.depth_min_usd < 500 %}depth-low{% else %}depth-pos{% endif %}">${{ '%.0f'|format(o.depth_min_usd) }}</span>
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </td>
+
+  {# Div stacked — the most important column #}
+  <td class="end stack div">
+    {% for side in ['home', 'draw', 'away'] %}
+      {% set o = m.outcomes[side] %}
+      <div>
+        {% if o.div is not none %}
+          <span class="{{ 'div-pos' if o.div > 0 else ('div-neg' if o.div < 0 else 'muted') }}{% if o.div is not none and o.div|abs >= 0.02 %} big{% endif %}">
+            {{ '%+.2f'|format(o.div * 100) }}
+          </span>
+        {% else %}
+          <span class="muted">—</span>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </td>
+
+  {# Best #}
+  <td class="end">
+    {% if m.best_side %}
+      <div class="best-num {% if m.best_div_cents >= 2 %}div-pos{% elif m.best_div_cents > 0 %}div-pos{% else %}div-neg{% endif %}">
+        {{ '%+.2f'|format(m.best_div_cents) }}¢
+      </div>
+      <span class="best-side">{{ m.best_side }}</span>
+    {% else %}
+      <span class="muted">—</span>
+    {% endif %}
+  </td>
+
+  {# Signal chip #}
+  <td>
+    {% if m.action_kind == 'buy' %}
+      <span class="chip chip-buy">BUY {{ m.action_side|upper }}</span>
+    {% elif m.action_kind == 'sell' %}
+      <span class="chip chip-sell">SELL {{ m.action_side|upper }}</span>
+    {% else %}
+      <span class="chip chip-skip">SKIP</span>
+      <span class="chip-reason">{{ m.action_reason }}</span>
+    {% endif %}
   </td>
 </tr>
 {% endfor %}
@@ -172,18 +269,24 @@
 </div>
 </div>
 
-<div class="mt-3 muted small">
-  <strong>Legend.</strong>
-  Highlighted rows sit in the T−120→0 pre-match window (our trade zone).
-  <span class="div-pos">Green div</span> = Polymarket below Pinnacle fair (underpriced, we'd buy).
-  <span class="div-neg">Red div</span> = Polymarket above fair (overpriced, we'd skip).
-  <strong>Bold</strong> = |div| ≥ {{ '%.0f'|format(state.entry_div_cents) }}¢.
-  <span class="chip chip-buy small">BUY</span> = all entry gates pass (div, spread ≤ 3¢, depth ≥ $500, fav prob < 0.80).
-  <span class="chip chip-skip small">SKIP</span> shows the first gate it failed.
-</div>
+<details class="legend-panel" open>
+  <summary>Legend</summary>
+  <div class="legend-body">
+    <span class="item"><span class="swatch" style="background:var(--amber)"></span>Highlighted rows sit in the T-120 → T-0 pre-match window (our trade zone)</span>
+    <span class="item"><span class="swatch" style="background:var(--green)"></span>Green div = Polymarket below Pinnacle fair (underpriced, we'd buy)</span>
+    <span class="item"><span class="swatch" style="background:var(--red)"></span>Red div = Polymarket above fair (overpriced, we'd skip)</span>
+    <span class="item"><strong style="color:var(--text)">Bold</strong>&nbsp;= |div| ≥ {{ '%.0f'|format(state.entry_div_cents) }}¢</span>
+    <span class="item"><span class="chip chip-buy">BUY</span>&nbsp;all gates pass (div ≥ 2¢, spread ≤ 3¢, depth ≥ $500, fav prob &lt; 0.80)</span>
+    <span class="item"><span class="chip chip-skip">SKIP</span>&nbsp;shows the first gate it failed</span>
+  </div>
+</details>
 {% else %}
-<div class="card"><div class="card-body text-center muted py-5">
-  <p class="mb-0">No matches with recent data.</p>
-  <small>Logger may be in its 00:00–12:00 IL inactive window, or between poll cycles.</small>
-</div></div>
+<div class="empty-state">
+  <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+    <circle cx="20" cy="20" r="16" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+    <path d="M13 20h14M20 13v14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
+  </svg>
+  <div style="margin-top:1rem;font-weight:500;color:var(--muted)">No live matches</div>
+  <div style="font-size:0.8rem;color:var(--muted);margin-top:0.3rem;opacity:0.6">Logger may be in its inactive window (00:00–14:00 IL) or between polls.</div>
+</div>
 {% endif %}

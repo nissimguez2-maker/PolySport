@@ -4,179 +4,453 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PolySport — live</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
   <link rel="stylesheet"
         href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
   <style>
     :root {
-      --bg:        #0b0f14;
-      --surface:   #11161d;
-      --surface2:  #161c25;
-      --border:    #222a35;
-      --muted:     #7d8a9c;
-      --text:      #d7dee8;
-      --accent:    #4ade80;
-      --accent2:   #60a5fa;
-      --warn:      #fbbf24;
-      --danger:    #f87171;
+      --bg:         #0e1210;
+      --surface:    #141a15;
+      --surface2:   #1a2219;
+      --border:     #232e24;
+      --border2:    #2d3c2e;
+      --muted:      #7a8c7c;
+      --text:       #e8ede9;
+      --text-bright:#f5f7f5;
+      --green:      #4eba6f;
+      --green-dim:  rgba(78, 186, 111, 0.10);
+      --red:        #e05252;
+      --red-dim:    rgba(224, 82, 82, 0.10);
+      --amber:      #d4a418;
+      --amber-dim:  rgba(212, 164, 24, 0.10);
+      --font-ui:    'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --font-num:   'DM Mono', 'SF Mono', 'Courier New', monospace;
+      --radius-sm:  4px;
+      --radius-md:  7px;
+      --radius-lg:  10px;
+      --transition: 150ms cubic-bezier(0.16, 1, 0.3, 1);
     }
+
     html, body {
       background: var(--bg);
       color: var(--text);
-      font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
-      font-feature-settings: "tnum" 1, "cv11" 1;
+      font-family: var(--font-ui);
+      font-weight: 400;
+      font-feature-settings: "cv11" 1;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
-    body { min-height: 100vh; }
-    .container-fluid { max-width: 1700px; }
+    body { min-height: 100vh; font-variant-numeric: tabular-nums; }
+    .container-fluid { max-width: 1800px; }
 
-    /* Typography */
-    h1.app-title {
-      font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em;
-      margin: 0;
+    .mono, .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+
+    /* ─── Header ─────────────────────────────────────────────────────── */
+    header.topbar {
+      padding: 1.25rem 0 1rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1.5rem;
     }
-    .app-subtitle { color: var(--muted); font-size: 0.95rem; font-weight: 400; }
-    .muted { color: var(--muted); }
+    .brand {
+      display: flex; align-items: center; gap: 0.7rem;
+      color: var(--text);
+    }
+    .brand-mark { color: var(--text); }
+    .brand-name {
+      font-family: var(--font-ui);
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -0.005em;
+      line-height: 1.1;
+      color: var(--text-bright);
+    }
+    .brand-sub {
+      font-size: 0.8rem;
+      color: var(--muted);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+    .meta-right {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .meta-sep { color: var(--border2); }
+    .meta-text {
+      font-family: var(--font-num);
+      font-size: 0.72rem;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+    }
 
-    /* KPI tiles */
+    /* ─── League pills (shared by header + table) ────────────────────── */
+    .league {
+      display: inline-block;
+      font-family: var(--font-ui);
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      padding: 0.2em 0.55em;
+      border-radius: var(--radius-sm);
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .league-epl { background: rgba(63,134,244,0.1);  color: #6baff7; border: 1px solid rgba(63,134,244,0.2); }
+    .league-ucl { background: rgba(100,80,200,0.1);  color: #9b8ff7; border: 1px solid rgba(100,80,200,0.2); }
+    .league-l1  { background: rgba(212,100,40,0.1);  color: #f0925a; border: 1px solid rgba(212,100,40,0.2); }
+    .league-sa  { background: rgba(78,186,111,0.1);  color: #4eba6f; border: 1px solid rgba(78,186,111,0.2); }
+    .league-ll  { background: rgba(224,82,82,0.1);   color: #e87070; border: 1px solid rgba(224,82,82,0.2); }
+    .league-bl  { background: rgba(212,164,24,0.1);  color: #d4a418; border: 1px solid rgba(212,164,24,0.2); }
+    .league-other { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+    /* ─── KPI tiles ──────────────────────────────────────────────────── */
     .kpi {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 0.9rem 1rem;
+      border-radius: var(--radius-lg);
+      padding: 1rem 1.1rem;
       height: 100%;
-      transition: border-color 0.15s;
+      transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
     }
-    .kpi:hover { border-color: #2d3a4e; }
+    .kpi:hover {
+      border-color: var(--border2);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    }
     .kpi-label {
-      font-size: 0.72rem;
+      font-family: var(--font-ui);
+      font-size: 0.656rem;  /* 10.5px */
       text-transform: uppercase;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.07em;
       color: var(--muted);
-      font-weight: 600;
+      font-weight: 500;
     }
     .kpi-value {
-      font-size: 1.7rem;
-      font-weight: 700;
+      font-family: var(--font-num);
+      font-size: 1.625rem;  /* 26px */
+      font-weight: 500;
       line-height: 1.1;
-      margin-top: 0.15rem;
-      letter-spacing: -0.02em;
+      margin-top: 0.35rem;
+      color: var(--text-bright);
+      letter-spacing: -0.005em;
     }
+    .kpi-value.good    { color: var(--green); }
+    .kpi-value.bad     { color: var(--red); }
+    .kpi-value.caution { color: var(--amber); }
     .kpi-sub {
-      font-size: 0.75rem;
+      font-family: var(--font-ui);
+      font-size: 0.6875rem;  /* 11px */
       color: var(--muted);
-      margin-top: 0.15rem;
+      margin-top: 0.4rem;
     }
 
-    /* Section titles */
-    .section-title {
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--muted);
+    .pulse {
+      display: inline-block;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      margin-right: 6px;
+      vertical-align: middle;
+      animation: breathe 2.4s ease-in-out infinite;
+    }
+    .pulse.dead { background: var(--red); animation: none; }
+    @keyframes breathe {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0.4; }
+    }
+
+    @keyframes flashUpdate {
+      0%   { opacity: 0.4; transform: translateY(-2px); }
+      100% { opacity: 1;   transform: translateY(0); }
+    }
+    .flash-update { animation: flashUpdate 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+    /* ─── Section bar above table ────────────────────────────────────── */
+    .section-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.4rem 0 0.55rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 0.9rem;
+    }
+    .section-label {
+      font-family: var(--font-ui);
+      font-size: 0.6875rem;
       font-weight: 600;
-      margin-bottom: 0.6rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
     }
-    .section-title .muted { text-transform: none; letter-spacing: 0; }
+    .section-meta {
+      font-family: var(--font-num);
+      font-size: 0.6875rem;
+      color: var(--muted);
+    }
 
-    /* Table */
-    .table-card {
+    /* ─── Matches table ──────────────────────────────────────────────── */
+    .matches-card {
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: var(--radius-lg);
       overflow: hidden;
     }
-    .table-dark {
-      --bs-table-bg: transparent;
-      --bs-table-hover-bg: #1a222d;
-      --bs-table-border-color: var(--border);
+    table.matches {
+      width: 100%;
+      margin: 0;
+      border-collapse: collapse;
       color: var(--text);
-      margin-bottom: 0;
     }
-    .table-dark thead th {
+    table.matches thead th {
+      position: sticky; top: 0; z-index: 1;
       background: var(--surface2);
-      border-bottom: 1px solid var(--border) !important;
+      font-family: var(--font-ui);
+      font-size: 0.656rem;  /* 10.5px */
+      font-weight: 500;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 0.65rem 0.8rem;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      text-align: left;
+    }
+    table.matches thead th.end { text-align: right; }
+    table.matches tbody td {
+      padding: 0.85rem 0.8rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.88rem;
+      vertical-align: middle;
+    }
+    table.matches tbody td.end { text-align: right; }
+    table.matches tbody tr {
+      transition: background-color var(--transition);
+    }
+    table.matches tbody tr:hover {
+      background: rgba(255,255,255,0.022);
+    }
+    table.matches tbody tr.in-window {
+      background: rgba(212,164,24,0.04);
+    }
+    table.matches tbody tr.in-window:hover {
+      background: rgba(212,164,24,0.06);
+    }
+    table.matches tbody tr.buy {
+      box-shadow: inset 3px 0 0 var(--green);
+    }
+
+    /* Kickoff split */
+    .kickoff-date {
+      font-family: var(--font-ui);
+      font-size: 0.84rem;
+      font-weight: 500;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .kickoff-time {
+      font-family: var(--font-num);
+      font-size: 0.77rem;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+
+    /* T pill */
+    .t-pill {
+      display: inline-block;
+      font-family: var(--font-num);
+      font-size: 0.77rem;
+      font-weight: 500;
+      padding: 0.22em 0.6em;
+      border-radius: var(--radius-sm);
+      white-space: nowrap;
+      line-height: 1.1;
+    }
+    .t-pill.pre    { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+    .t-pill.window { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(212,164,24,0.25); }
+    .t-pill.live   { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(224,82,82,0.25); }
+
+    /* Team names */
+    .team-home {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 0.92rem;
+      color: var(--text-bright);
+    }
+    .team-away {
+      font-family: var(--font-ui);
+      font-weight: 400;
+      font-size: 0.92rem;
+      color: var(--text);
+    }
+    .vs-sep { color: var(--muted); font-size: 0.8rem; margin: 0 0.35rem; }
+
+    /* Stacked numeric cells (Fair / Mid / Depth / Div) */
+    .stack {
+      font-family: var(--font-num);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.82rem;
+      line-height: 1.65;
+    }
+    .stack.div { font-size: 0.86rem; font-weight: 500; }
+    .stack .muted { color: var(--muted); }
+    .stack .dim   { color: var(--muted); }
+
+    .div-pos { color: var(--green); }
+    .div-neg { color: var(--red); }
+    .div-pos.big, .div-neg.big { font-weight: 600; }
+
+    .spread-cell {
+      font-family: var(--font-num);
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .spread-cell.wide { color: var(--amber); }
+
+    .depth-pos { color: var(--muted); }
+    .depth-low { color: var(--amber); }
+
+    .best-num {
+      font-family: var(--font-num);
+      font-size: 1rem;
+      font-weight: 600;
+      line-height: 1.1;
+    }
+    .best-side {
+      display: block;
+      font-family: var(--font-ui);
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* Signal chips */
+    .chip {
+      display: inline-block;
+      font-family: var(--font-ui);
       font-size: 0.72rem;
       font-weight: 600;
       letter-spacing: 0.06em;
+      padding: 0.3em 0.7em;
+      border-radius: var(--radius-sm);
       text-transform: uppercase;
-      color: var(--muted);
-      padding: 0.7rem 0.75rem;
-      white-space: nowrap;
+      line-height: 1.1;
     }
-    .table-dark tbody td {
-      padding: 0.7rem 0.75rem;
-      border-top: 1px solid var(--border);
-      font-size: 0.92rem;
-      vertical-align: middle;
-    }
-    .row-window { background: #0f1a24 !important; }
-    .row-window td { border-top-color: #243346 !important; }
-
-    .t-code {
-      background: var(--surface2);
-      padding: 0.15em 0.5em;
-      border-radius: 4px;
-      color: var(--text);
-      font-size: 0.85em;
-    }
-    .league {
+    .chip-buy  { background: var(--green-dim); color: var(--green); border: 1px solid rgba(78,186,111,0.3); }
+    .chip-sell { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(212,164,24,0.3); }
+    .chip-skip { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+    .chip-reason {
+      display: block;
+      font-family: var(--font-ui);
       font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
       color: var(--muted);
-      background: var(--surface2);
-      padding: 0.15em 0.55em;
-      border-radius: 3px;
+      margin-top: 4px;
+      font-style: italic;
     }
 
-    .div-pos { color: var(--accent); }
-    .div-neg { color: var(--danger); }
-    .div-big { font-weight: 700; }
-    .best-num { font-size: 1.02rem; line-height: 1.1; }
-
-    /* Chips */
-    .chip {
+    /* ─── Legend ─────────────────────────────────────────────────────── */
+    .legend-panel {
+      margin-top: 1rem;
+      padding: 0.2rem 0;
+    }
+    .legend-panel summary {
+      list-style: none;
+      cursor: pointer;
+      font-family: var(--font-ui);
+      font-size: 0.6875rem;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 0.3rem 0;
+    }
+    .legend-panel summary::-webkit-details-marker { display: none; }
+    .legend-panel summary::before {
+      content: "▸";
       display: inline-block;
-      padding: 0.15rem 0.55rem;
-      font-size: 0.72rem;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-      border-radius: 4px;
-      white-space: nowrap;
+      margin-right: 0.5rem;
+      font-size: 0.7rem;
+      transition: transform var(--transition);
     }
-    .chip-buy  { background: #0c3d1f; color: #86efac; border: 1px solid #14532d; }
-    .chip-sell { background: #451a03; color: #fcd34d; border: 1px solid #78350f; }
-    .chip-skip { background: #1a1f28; color: var(--muted); border: 1px solid var(--border); }
+    .legend-panel[open] summary::before { transform: rotate(90deg); }
+    .legend-body {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.4rem;
+      padding: 0.6rem 0 0.2rem;
+      font-family: var(--font-ui);
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .legend-body .item { display: inline-flex; align-items: center; gap: 0.4rem; }
+    .swatch {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+    }
 
-    /* Pulse */
-    .pulse {
-      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-      background: var(--accent); box-shadow: 0 0 6px var(--accent);
-      animation: pulse 1.6s infinite;
-      margin-right: 0.35rem;
+    /* ─── Empty state ────────────────────────────────────────────────── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 4rem 2rem;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
     }
-    .pulse.dead { background: var(--danger); box-shadow: 0 0 6px var(--danger); animation: none; }
-    @keyframes pulse { 50% { opacity: 0.35; } }
 
-    /* Header */
-    header.topbar {
-      padding: 1.2rem 0 0.3rem 0;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 1.4rem;
-    }
+    /* Overrides for Bootstrap */
+    .table-responsive { overflow-x: auto; }
   </style>
 </head>
 <body>
 <div class="container-fluid px-4">
   <header class="topbar">
-    <div class="d-flex align-items-center justify-content-between mb-2">
-      <div>
-        <h1 class="app-title">PolySport</h1>
-        <div class="app-subtitle">Phase 1 — live divergence monitor (Pinnacle vs Polymarket)</div>
+    <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+      <div class="brand">
+        <span class="brand-mark">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="PolySport">
+            <circle cx="14" cy="14" r="12" stroke="currentColor" stroke-width="1.5"/>
+            <polygon points="14,7 17.5,10 16.5,14.5 11.5,14.5 10.5,10" stroke="currentColor" stroke-width="1.2" fill="none"/>
+            <line x1="10.5" y1="10" x2="7" y2="13" stroke="currentColor" stroke-width="1.2"/>
+            <line x1="17.5" y1="10" x2="21" y2="13" stroke="currentColor" stroke-width="1.2"/>
+            <line x1="11.5" y1="14.5" x2="10" y2="18.5" stroke="currentColor" stroke-width="1.2"/>
+            <line x1="16.5" y1="14.5" x2="18" y2="18.5" stroke="currentColor" stroke-width="1.2"/>
+            <line x1="10" y1="18.5" x2="18" y2="18.5" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+        </span>
+        <div>
+          <div class="brand-name">PolySport</div>
+          <div class="brand-sub">Phase 1 — live divergence monitor (Pinnacle vs Polymarket)</div>
+        </div>
       </div>
-      <div class="muted small text-end">
-        Pinnacle benchmark · adaptive per-event polling · EPL + UCL + Ligue 1 + Serie A + La Liga + Bundesliga<br>
-        Active window 14:00–22:30 IL · Trade zone T-120 → T-0
+
+      <div class="meta-right">
+        <span class="league league-epl">EPL</span>
+        <span class="league league-ucl">UCL</span>
+        <span class="league league-l1">L1</span>
+        <span class="league league-sa">SA</span>
+        <span class="league league-ll">LL</span>
+        <span class="league league-bl">BL</span>
+        <span class="meta-sep">·</span>
+        <span class="meta-text">14:00–22:30 IL</span>
+        <span class="meta-sep">·</span>
+        <span class="meta-text">Trade zone T-120 → T-0</span>
       </div>
     </div>
   </header>
@@ -184,9 +458,38 @@
   <div id="content"
        hx-get="/fragment"
        hx-trigger="load, every 15s"
-       hx-swap="innerHTML">
-    <div class="muted">loading…</div>
+       hx-swap="innerHTML"
+       hx-on:htmx:response-error="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML"
+       hx-on:htmx:send-error="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML"
+       hx-on:htmx:timeout="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML">
+    <div class="empty-state">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+        <circle cx="20" cy="20" r="16" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+      </svg>
+      <div style="margin-top:1rem;font-weight:500;color:var(--muted)">loading…</div>
+    </div>
   </div>
+  <template id="fragment-error">
+    <div class="empty-state" style="border-color:rgba(224,82,82,0.35);background:rgba(224,82,82,0.06)">
+      <div style="font-weight:600;color:var(--red);letter-spacing:0.02em">⚠ Dashboard fetch failed</div>
+      <div style="font-size:0.8rem;color:var(--muted);margin-top:0.3rem">
+        /fragment returned an error. Check Railway logs for the dashboard service.
+        Retrying every 15s.
+      </div>
+    </div>
+  </template>
 </div>
+
+<script>
+  document.addEventListener('htmx:afterSwap', function(e) {
+    if (e.detail.target.id === 'content') {
+      document.querySelectorAll('.kpi-value').forEach(function(el) {
+        el.classList.remove('flash-update');
+        void el.offsetWidth;
+        el.classList.add('flash-update');
+      });
+    }
+  });
+</script>
 </body>
 </html>

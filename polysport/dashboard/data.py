@@ -127,6 +127,19 @@ def get_live_state(sb) -> dict:
                         .is_("resolved_at", "null")
                         .execute()).count or 0
 
+    # Best-effort quota read. The migration may not have been applied yet on
+    # a fresh deploy; the dashboard must still render. Same defensive pattern
+    # as the logger's _persist_quota.
+    quota: dict | None = None
+    try:
+        qrows = (sb.table("odds_api_quota")
+                 .select("remaining, used, last_cost, updated_at")
+                 .eq("id", 1).limit(1).execute()).data
+        if qrows:
+            quota = qrows[0]
+    except Exception:  # noqa: BLE001
+        quota = None
+
     pin_by_match: dict[tuple, dict] = {}
     for r in pin_rows:
         kt = _parse_ts(r["commence_time"])
@@ -228,6 +241,39 @@ def get_live_state(sb) -> dict:
     n_in_window = sum(1 for m in match_rows if m.in_window)
     best_gap = max((m.best_div_cents for m in match_rows), default=0.0)
 
+    # Matcher join health: the matcher is the single join between Pinnacle
+    # (odds_api_snapshots) and Polymarket (polymarket_snapshots). If it drops
+    # pairs silently, every downstream number is wrong.
+    #
+    #   n_expected = distinct Pinnacle matches in the window
+    #   n_matched  = of those, how many have any Polymarket outcome joined
+    #   n_incomplete = 1 or 2 sides present (should be 0 or 3; anything in
+    #                  between means Polymarket reshaped a question or the
+    #                  join dropped an outcome)
+    n_expected = len(pin_by_match)
+    n_matched = 0
+    n_incomplete = 0
+    for (home_id, away_id, _) in pin_by_match:
+        sides_present = sum(
+            1 for side in ("home", "draw", "away")
+            if (home_id, away_id, side) in pm_by_outcome
+        )
+        if sides_present >= 1:
+            n_matched += 1
+        if 0 < sides_present < 3:
+            n_incomplete += 1
+
+    # Days-remaining burn estimate: scale `used` by the fraction of the current
+    # month elapsed. Assumes The Odds API quota resets on the 1st — it does on
+    # the Starter plan as of 2026-04. Falls back to None on edge cases.
+    quota_days_remaining: float | None = None
+    if quota and quota.get("remaining") is not None and quota.get("used") is not None:
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        days_elapsed = max((now - month_start).total_seconds() / 86400.0, 0.01)
+        avg_per_day = quota["used"] / days_elapsed
+        if avg_per_day > 0:
+            quota_days_remaining = quota["remaining"] / avg_per_day
+
     return {
         "now_local": now.astimezone(ISRAEL_TZ).strftime("%H:%M:%S"),
         "last_poll_age_sec": last_poll_age_sec,
@@ -237,6 +283,13 @@ def get_live_state(sb) -> dict:
         "n_would_fire": n_would_fire,
         "best_gap_cents": best_gap,
         "unresolved_count": unresolved_count,
+        "n_matched": n_matched,
+        "n_expected": n_expected,
+        "n_incomplete_markets": n_incomplete,
+        "quota_remaining": quota["remaining"] if quota else None,
+        "quota_used": quota["used"] if quota else None,
+        "quota_days_remaining": quota_days_remaining,
+        "pinnacle_stale_sec": 60,
         "matches": match_rows,
         "fmt_t": _fmt_t,
         "entry_div_cents": ENTRY_DIV_THRESHOLD * 100,

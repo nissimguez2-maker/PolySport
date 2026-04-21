@@ -21,18 +21,10 @@ The matcher is intentionally separate from the writer. The caller's job:
 
 from __future__ import annotations
 
-import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-# Reuse the augmenter's normaliser so matcher and augmenter agree on equivalence.
-# Importing from scripts/ keeps the normaliser as the single source of truth.
-# (If the augmenter moves into polysport/, update this import.)
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from scripts.augment_aliases import normalise_name  # noqa: E402
+from polysport.utils.text import normalise_name
 
 
 @dataclass(frozen=True)
