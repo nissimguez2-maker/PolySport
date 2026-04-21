@@ -13,7 +13,6 @@
     <div class="kpi-value {% if state.best_gap_cents >= state.entry_div_cents %}good{% elif state.best_gap_cents > 0 %}caution{% endif %}">
       {{ '%+.2f'|format(state.best_gap_cents) }}¢
     </div>
-    <div class="kpi-sub">max signed div · threshold {{ '%.0f'|format(state.entry_div_cents) }}¢</div>
   </div>
 
   <div class="kpi">

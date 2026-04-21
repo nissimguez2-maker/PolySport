@@ -64,10 +64,16 @@ def _parse_ts(s):
 
 
 def _fmt_t(minutes_to_kick: float) -> str:
-    """Sports convention: T-30m = kickoff in 30 min; T+15m = match 15 min in."""
-    if minutes_to_kick >= 0:
-        return f"T-{minutes_to_kick:.0f}m"
-    return f"T+{-minutes_to_kick:.0f}m"
+    """Countdown to kickoff as H:MM (e.g. 1:53, 0:45, 0:00).
+
+    Post-kickoff rows are filtered upstream in get_live_state, so this path
+    is effectively always non-negative. The negative branch stays as a
+    defensive fallback.
+    """
+    if minutes_to_kick < 0:
+        return f"+{-int(round(minutes_to_kick))}m"
+    h, m = divmod(int(round(minutes_to_kick)), 60)
+    return f"{h}:{m:02d}"
 
 
 def _decide_action(m: MatchRow) -> tuple[str, str | None, str]:
