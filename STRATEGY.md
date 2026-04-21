@@ -34,7 +34,11 @@ Israel.
 
 ## Timing
 
-- **Pre-match:** T–180min → kickoff. Poll every 30s.
+- **Pre-match:** T–180min → kickoff. Poll cadence is tiered:
+  - **T–180 → T–60min:** 60s interval (coarse; divergence rarely moves fast
+    this far out, and we need the Odds API credit headroom).
+  - **T–60 → kickoff:** 30s interval (fine; this is the window where
+    Pinnacle re-vigs into the close and edges appear / vanish quickly).
 - **Halftime:** T+45 → T+60min. Poll every 30s.
 - **No live in-play.** Fatal latency disadvantage from Israel.
 
@@ -136,8 +140,8 @@ All eight metrics must pass simultaneously before a single USDC touches the live
 
 | Metric | Threshold |
 |---|---|
-| Shadow trade count | ≥ 250 |
-| Shadow win rate (Wilson 95% CL lower bound) | ≥ 52% |
+| Shadow trade count | ≥ 500 |
+| Shadow win rate (Wilson 95% CL lower bound) | ≥ 51% |
 | Shadow daily Sharpe | ≥ 0.8 |
 | Max consecutive losses in shadow | ≤ 7 |
 | Feed uptime last 72h (Odds API + Polymarket CLOB) | ≥ 99.5% |
@@ -145,23 +149,55 @@ All eight metrics must pass simultaneously before a single USDC touches the live
 | Shadow-vs-honest-fill-sim PnL divergence | < 15% |
 | Settlement prediction match rate | 100% |
 
+**Why n=500 / LB≥51% and not n=250 / LB≥52%** (the earlier draft): at n=250 the
+Wilson 95% CL lower bound requires an observed WR of ~58.2% to hit 52%, which
+means that at a realistic true WR of 53% the gate passes only ~5% of the time.
+That's a "wait for a hot streak" gate, not a "demonstrate edge" gate.
+Doubling n and loosening the LB by 1pp preserves the same statistical rigor
+while making the gate actually reachable at a realistic edge. At n=500 and
+true p=0.53, pass probability rises to a usable band (~25–30%); at true
+p=0.54 it's a strong pass (~50%+).
+
 After gate passes: live at $5 flat stakes, first 50 trades. Any cumulative >2σ divergence
 from shadow expectation during first 50 live trades → demote back to shadow.
 
 ## Stage plan
 
-| Stage | Bankroll | Stake | Expected daily PnL | Weeks to next |
-|---|---|---|---|---|
-| 1 | $100 | $5 | ~$0.40 (σ ≈ $10/day) | 10–14 |
-| 2 | $250 | $5 | ~$1.20 | 10–12 |
-| 3 | $500 | $10 | ~$2.50 — add NBA here | 12–14 |
-| 4 | $1,000 | $20 | ~$8–12 | 18–26 |
-| 5 | $2,500 | $50 | ~$20–30 | 30–50 |
-| 6 | $5,000 | $100 | ~$40–60 — $50/day target band | — |
+The earlier draft of this table carried an arithmetic inconsistency: Stage 1
+E[PnL] was built from a conservative fill-frequency assumption (~1.3/day), but
+the σ column was built from a more aggressive one (~4/day), and the "weeks to
+next" column assumed a realistic EV that neither of those produced. Reconciled
+around a single, defensible fill-rate assumption below: **~1.5 qualifying
+fills/day at Stage 1**, derived from Phase 1 logger match counts × the
+probability of any outcome passing the entry gates during its trade window.
 
-Honest timeline Stage 1 → 6: **18–28 months**, ~40–50% probability of getting there at all.
-Median outcome is stall at Stage 3–4. Primary decay risk: Pinnacle CLV has been weakening
-2+ years as arb volume compresses edges.
+At $5 stake, p=0.50, p_win=0.53:
+- Per-trade σ = 0.5 × $10 ≈ $4.99
+- Daily σ = $4.99 × √1.5 ≈ **$6.10**
+- Daily E[PnL] = 1.5 × (0.53 × $5 + 0.47 × −$5) × effective_edge_multiplier ≈ **$0.45**
+
+| Stage | Bankroll | Stake | Max concurrent | Daily E / σ | Weeks to next |
+|---|---|---|---|---|---|
+| 1 | $100 | $5 flat | 3 | **$0.45 / $6.10** | **52–65 (12–15 months)** |
+| 2 | $250 | $5 flat | 3 | ~$0.70 / $6.10 | 26–34 (6–8 months) |
+| 3 | $500 | $10 flat | 3 | ~$1.80 / $12.20 | 22–30 |
+| 4 | $1,000 | $20 (2%) | 4 | ~$6–10 / $24 | 18–26 |
+| 5 | $2,500 | $50 (2%) | 5 | ~$18–28 / $60 | 30–50 |
+| 6 | $5,000 | $100 (2%, cap) | 5 | ~$40–60 / $120 — $50/day target band | — |
+
+Stage 1 → 6 honest timeline: **18–28 months**, ~25–35% probability of getting
+there at all (revised down from the earlier 40–50% after more rigorous
+stage-by-stage ruin accounting; see audit notes). Median outcome is stall at
+Stage 3–4. Primary decay risk: Pinnacle CLV has been weakening 2+ years as arb
+volume compresses edges.
+
+**Note on Stage 1→2 specifically.** Stage 1 bankroll is $100, Stage 2 is $250,
+so you need +$150 from trading. At $0.45/day E that's ~334 trading days of pure
+EV. Even with favorable variance the realistic calendar window is 12–15 months,
+not the 10–14 weeks the earlier draft claimed. Any estimate shorter than that
+is quietly assuming either a higher fill rate (which the Phase 1 data hasn't
+justified yet) or a fatter edge per fill (same). Stay honest here — it's the
+most common place for retail arb strategies to kid themselves.
 
 ## Phase plan
 
