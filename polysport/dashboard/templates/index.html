@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0e1210">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf7">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1210">
   <title>PolySport — live</title>
 
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28' fill='none' stroke='%234eba6f' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'><circle cx='14' cy='14' r='12'/><polygon points='14,7 17.5,10 16.5,14.5 11.5,14.5 10.5,10'/><line x1='10.5' y1='10' x2='7' y2='13'/><line x1='17.5' y1='10' x2='21' y2='13'/><line x1='11.5' y1='14.5' x2='10' y2='18.5'/><line x1='16.5' y1='14.5' x2='18' y2='18.5'/><line x1='10' y1='18.5' x2='18' y2='18.5'/></svg>">
@@ -16,32 +17,45 @@
 
   <style>
     :root {
-      --bg:         #0e1210;
-      --surface:    #141a15;
-      --surface2:   #1a2219;
-      --border:     #232e24;
-      --border2:    #2d3c2e;
-      --muted:      #7a8c7c;
-      --text:       #e8ede9;
-      --text-bright:#f5f7f5;
-      --green:      #4eba6f;
-      --green-dim:  rgba(78, 186, 111, 0.10);
-      --red:        #e05252;
-      --red-dim:    rgba(224, 82, 82, 0.10);
-      --amber:      #d4a418;
-      --amber-dim:  rgba(212, 164, 24, 0.10);
-      --red-border-alert: rgba(224, 82, 82, 0.35);
-      --red-bg-alert:     rgba(224, 82, 82, 0.06);
-      --hover-overlay:    rgba(255, 255, 255, 0.022);
-      --in-window-bg:     rgba(212, 164, 24, 0.04);
-      --in-window-bg-hover: rgba(212, 164, 24, 0.06);
-      /* Accent borders for chips/pills. Two steps: subtle and strong. */
-      --green-border:        rgba(78, 186, 111, 0.25);
-      --green-border-strong: rgba(78, 186, 111, 0.35);
-      --amber-border:        rgba(212, 164, 24, 0.25);
-      --amber-border-strong: rgba(212, 164, 24, 0.35);
-      --red-border:          rgba(224, 82, 82, 0.25);
-      --red-border-strong:   rgba(224, 82, 82, 0.35);
+      color-scheme: light dark;
+
+      /* Neutrals — light warm-whites / dark pitch-greens per OS preference.
+         Light palette deliberately avoids tinting toward green; on white
+         surfaces a green tint reads as "seasick" rather than on-brand. */
+      --bg:          light-dark(#fafaf7, #0e1210);
+      --surface:     light-dark(#ffffff, #141a15);
+      --surface2:    light-dark(#f0f1ec, #1a2219);
+      --border:      light-dark(#e3e5df, #232e24);
+      --border2:     light-dark(#cfd2ca, #2d3c2e);
+      --muted:       light-dark(#6a6f68, #7a8c7c);
+      --text:        light-dark(#1a1e1b, #e8ede9);
+      --text-bright: light-dark(#0a0d0b, #f5f7f5);
+
+      /* Semantic accents — darker on light for >4.5:1 text contrast; the
+         bright dark-mode values stay because they read well on dark surface. */
+      --green:       light-dark(#1f7a3d, #4eba6f);
+      --red:         light-dark(#a81a1a, #e05252);
+      --amber:       light-dark(#7d5b00, #d4a418);
+
+      /* Derived tints and borders — color-mix pulls the active --green
+         automatically, so one token family covers both themes. */
+      --green-dim:           color-mix(in srgb, var(--green) 10%, transparent);
+      --red-dim:             color-mix(in srgb, var(--red)   10%, transparent);
+      --amber-dim:           color-mix(in srgb, var(--amber) 10%, transparent);
+      --green-border:        color-mix(in srgb, var(--green) 25%, transparent);
+      --green-border-strong: color-mix(in srgb, var(--green) 35%, transparent);
+      --amber-border:        color-mix(in srgb, var(--amber) 25%, transparent);
+      --amber-border-strong: color-mix(in srgb, var(--amber) 35%, transparent);
+      --red-border:          color-mix(in srgb, var(--red)   25%, transparent);
+      --red-border-strong:   color-mix(in srgb, var(--red)   35%, transparent);
+      --red-border-alert:    color-mix(in srgb, var(--red)   35%, transparent);
+      --red-bg-alert:        color-mix(in srgb, var(--red)    6%, transparent);
+
+      /* Row-level state overlays. Hover is ink-on-light / white-on-dark. */
+      --hover-overlay:       light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.022));
+      --in-window-bg:        color-mix(in srgb, var(--amber) 5%, transparent);
+      --in-window-bg-hover:  color-mix(in srgb, var(--amber) 8%, transparent);
+
       --font-ui:    'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-num:   'DM Mono', 'SF Mono', 'Courier New', monospace;
       --radius-sm:  4px;
@@ -144,12 +158,14 @@
       line-height: 1;
       white-space: nowrap;
     }
-    .league-epl { background: rgba(63,134,244,0.1);  color: #6baff7; border: 1px solid rgba(63,134,244,0.2); }
-    .league-ucl { background: rgba(100,80,200,0.1);  color: #9b8ff7; border: 1px solid rgba(100,80,200,0.2); }
-    .league-l1  { background: rgba(212,100,40,0.1);  color: #f0925a; border: 1px solid rgba(212,100,40,0.2); }
-    .league-sa  { background: rgba(78,186,111,0.1);  color: #4eba6f; border: 1px solid rgba(78,186,111,0.2); }
-    .league-ll  { background: rgba(224,82,82,0.1);   color: #e87070; border: 1px solid rgba(224,82,82,0.2); }
-    .league-bl  { background: rgba(212,164,24,0.1);  color: #d4a418; border: 1px solid rgba(212,164,24,0.2); }
+    /* League pills — identity sub-palette. Text color flips darker on light
+       so every pill carries enough contrast on both themes. */
+    .league-epl { background: rgba(63,134,244,0.12);  color: light-dark(#1a5cc9, #6baff7); border: 1px solid rgba(63,134,244,0.25); }
+    .league-ucl { background: rgba(100,80,200,0.12);  color: light-dark(#4a3a99, #9b8ff7); border: 1px solid rgba(100,80,200,0.25); }
+    .league-l1  { background: rgba(212,100,40,0.12);  color: light-dark(#8a4418, #f0925a); border: 1px solid rgba(212,100,40,0.25); }
+    .league-sa  { background: rgba(78,186,111,0.12);  color: light-dark(#1f7a3d, #4eba6f); border: 1px solid rgba(78,186,111,0.25); }
+    .league-ll  { background: rgba(224,82,82,0.12);   color: light-dark(#a81a1a, #e87070); border: 1px solid rgba(224,82,82,0.25); }
+    .league-bl  { background: rgba(212,164,24,0.12);  color: light-dark(#7d5b00, #d4a418); border: 1px solid rgba(212,164,24,0.25); }
     .league-other { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
 
     /* ─── KPI tiles (two tiers) ──────────────────────────────────────── */
