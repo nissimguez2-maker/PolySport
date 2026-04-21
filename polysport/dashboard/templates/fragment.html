@@ -1,6 +1,6 @@
 {# Tier 1 — the three numbers an operator actually stares at #}
 <div class="kpi-grid-primary">
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite" aria-atomic="true">
     <div class="kpi-label">Would fire now</div>
     <div class="kpi-value {% if state.n_would_fire > 0 %}good{% endif %}">
       {{ state.n_would_fire }}
@@ -15,7 +15,7 @@
     </div>
   </div>
 
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite" aria-atomic="true">
     <div class="kpi-label">In trade window</div>
     <div class="kpi-value {% if state.n_in_window > 0 %}caution{% endif %}">
       {{ state.n_in_window }}
