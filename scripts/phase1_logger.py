@@ -184,10 +184,22 @@ def poll_event_odds(sb, http: httpx.Client, matcher: TeamMatcher,
 
 
 def poll_polymarket(sb, http: httpx.Client, matcher: TeamMatcher,
-                    league: str) -> int:
-    """Fetch one league's Polymarket events + books, write snapshots."""
+                    league: str,
+                    *, target_pairs: set[tuple[str, str]] | None = None
+                    ) -> tuple[int, int, int]:
+    """Fetch one league's Polymarket events + books, write snapshots.
+
+    target_pairs: optional set of (home_team_id, away_team_id). When provided,
+    only write rows for PM events whose resolved team pair appears here. Lets
+    us scope /book spend to matches that have an Odds API schedule entry —
+    everything else (season markets, matches we don't track) is skipped.
+
+    Returns (rows_written, events_parsed, events_matched).
+    """
     events = list_league_events(http, league)
     rows = 0
+    parsed = 0
+    matched = 0
     for e in events:
         raw_title = e.get("title") or ""
         if " vs" not in raw_title.lower():
@@ -196,22 +208,31 @@ def poll_polymarket(sb, http: httpx.Client, matcher: TeamMatcher,
         m = TITLE_PATTERN.match(title)
         if not m:
             continue
+        parsed += 1
         home_raw = m.group("home").strip()
         away_raw = m.group("away").strip()
 
-        commence = _parse_iso8601(e.get("startDate") or "")
-        # Polymarket's startDate is event creation, not kickoff. We can't
-        # horizon-filter reliably on Polymarket — only on Odds API where we
-        # trust commence_time. Log everything we can parse.
+        # Resolve first so we can filter against the Odds API schedule before
+        # spending /book calls on events we don't track.
+        home_id = _resolve(matcher, home_raw, source="polymarket",
+                           league=league, extra={"event_id": e.get("id"), "title": raw_title})
+        away_id = _resolve(matcher, away_raw, source="polymarket",
+                           league=league, extra={"event_id": e.get("id"), "title": raw_title})
+        if target_pairs is not None:
+            if home_id is None or away_id is None:
+                continue
+            if (home_id, away_id) not in target_pairs:
+                continue
+        matched += 1
 
         markets = extract_moneyline_markets(e, home_raw, away_raw)
         if not markets:
             continue
 
-        home_id = _resolve(matcher, home_raw, source="polymarket",
-                           league=league, extra={"event_id": e.get("id"), "title": raw_title})
-        away_id = _resolve(matcher, away_raw, source="polymarket",
-                           league=league, extra={"event_id": e.get("id"), "title": raw_title})
+        # Polymarket's startDate is event creation, not kickoff — do not trust
+        # it for analysis. Write what we have; analyze_divergence.py anchors on
+        # Odds API commence_time.
+        commence = _parse_iso8601(e.get("startDate") or "")
 
         for mkt in markets:
             try:
@@ -245,7 +266,7 @@ def poll_polymarket(sb, http: httpx.Client, matcher: TeamMatcher,
                 },
             }).execute()
             rows += 1
-    return rows
+    return rows, parsed, matched
 
 
 def _resolve(matcher: TeamMatcher, raw: str, *, source: str, league: str,
@@ -258,8 +279,13 @@ def _resolve(matcher: TeamMatcher, raw: str, *, source: str, league: str,
 def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
               api_key: str, leagues: list[str],
               schedule: dict[str, list[EventSummary]]) -> None:
-    """Per-cycle work: poll /events/{id}/odds for every match in T-120 window,
-    then Polymarket (free) for leagues that have any in-window match.
+    """Per-cycle work:
+      1. Pinnacle (paid): /events/{id}/odds for every match in the T-120m
+         window.
+      2. Polymarket (free): one /events scan per league every cycle, scoped
+         to team pairs in the Odds API schedule. Runs regardless of in-window
+         status so we capture pre-window mid-curve drift — analysis joins by
+         team_id anyway.
     """
     started = time.monotonic()
     in_window: dict[str, list[EventSummary]] = {
@@ -269,12 +295,10 @@ def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
     total_in_window = sum(len(v) for v in in_window.values())
     if total_in_window == 0:
         print(f"  [idle] no matches in T-{TRADE_WINDOW_MIN}m window across "
-              f"{len(leagues)} leagues — skipping paid calls.", flush=True)
+              f"{len(leagues)} leagues — skipping paid Odds API calls.", flush=True)
 
     last_quota_remaining = "?"
     for lg, evs in in_window.items():
-        if not evs:
-            continue
         for ev in evs:
             mins = _minutes_to_kick(ev.commence_time) or 0.0
             try:
@@ -288,9 +312,33 @@ def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
                 print(f"  [odds_api {lg}] ERROR on {ev.event_id}: {exc!r}", flush=True)
                 traceback.print_exc()
 
+    # Polymarket poll: every league every cycle, scoped to schedule team pairs.
+    for lg in leagues:
+        sched_evs = schedule.get(lg, [])
+        target_pairs: set[tuple[str, str]] = set()
+        for ev in sched_evs:
+            h = _resolve(matcher, ev.home_team_raw, source="odds_api",
+                         league=lg, extra={"event_id": ev.event_id})
+            a = _resolve(matcher, ev.away_team_raw, source="odds_api",
+                         league=lg, extra={"event_id": ev.event_id})
+            if h and a:
+                target_pairs.add((h, a))
+
+        if not target_pairs:
+            print(f"  [polymarket {lg:<8}] no schedule pairs resolved — skipping.",
+                  flush=True)
+            continue
+
         try:
-            n = poll_polymarket(sb, http, matcher, lg)
-            print(f"  [polymarket {lg:<8}] wrote {n:3d} rows", flush=True)
+            rows, parsed, matched = poll_polymarket(
+                sb, http, matcher, lg, target_pairs=target_pairs)
+            flag = ""
+            if parsed == 0:
+                flag = "  ⚠ no match-level events returned by Gamma"
+            elif matched == 0:
+                flag = "  ⚠ parsed events but none matched schedule pairs"
+            print(f"  [polymarket {lg:<8}] parsed={parsed:3d} matched={matched:2d} "
+                  f"wrote={rows:3d} rows{flag}", flush=True)
         except Exception as exc:  # noqa: BLE001
             print(f"  [polymarket {lg}] ERROR: {exc!r}", flush=True)
             traceback.print_exc()
@@ -299,7 +347,7 @@ def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
         print(f"  ⚠ LOW QUOTA: {last_quota_remaining} remaining", flush=True)
     dur = time.monotonic() - started
     print(f"cycle done in {dur:5.1f}s  "
-          f"(polled {total_in_window} events)", flush=True)
+          f"(polled {total_in_window} Pinnacle events)", flush=True)
 
 
 def main() -> int:
