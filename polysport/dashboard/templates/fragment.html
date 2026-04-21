@@ -89,11 +89,10 @@
           {{ '{:,}'.format(state.quota_remaining) }}
         </div>
         <div class="kpi-sub">
-          {{ '{:,}'.format(state.quota_used or 0) }} used ·
-          {% if state.quota_days_remaining is not none %}
-            ~{{ '%.0f'|format(state.quota_days_remaining) }}d at current burn
-          {% else %}
-            burn rate unknown
+          {{ '{:,}'.format(state.quota_used or 0) }} /
+          {{ '{:,}'.format(state.quota_total) if state.quota_total is not none else '?' }} used
+          {% if state.quota_pct_used is not none %}
+            ({{ '%.0f'|format(state.quota_pct_used) }}%)
           {% endif %}
         </div>
       {% else %}

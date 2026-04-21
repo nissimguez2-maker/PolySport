@@ -263,16 +263,16 @@ def get_live_state(sb) -> dict:
         if 0 < sides_present < 3:
             n_incomplete += 1
 
-    # Days-remaining burn estimate: scale `used` by the fraction of the current
-    # month elapsed. Assumes The Odds API quota resets on the 1st — it does on
-    # the Starter plan as of 2026-04. Falls back to None on edge cases.
-    quota_days_remaining: float | None = None
+    # The Odds API quota resets monthly, so "% of monthly budget used" is a
+    # cleaner signal than a days-remaining countdown (which can mislead when
+    # the reset happens before the countdown ends). Total = remaining + used,
+    # so the percentage auto-adjusts if the plan changes.
+    quota_total: int | None = None
+    quota_pct_used: float | None = None
     if quota and quota.get("remaining") is not None and quota.get("used") is not None:
-        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        days_elapsed = max((now - month_start).total_seconds() / 86400.0, 0.01)
-        avg_per_day = quota["used"] / days_elapsed
-        if avg_per_day > 0:
-            quota_days_remaining = quota["remaining"] / avg_per_day
+        quota_total = quota["remaining"] + quota["used"]
+        if quota_total > 0:
+            quota_pct_used = 100.0 * quota["used"] / quota_total
 
     return {
         "now_local": now.astimezone(ISRAEL_TZ).strftime("%H:%M:%S"),
@@ -288,7 +288,8 @@ def get_live_state(sb) -> dict:
         "n_incomplete_markets": n_incomplete,
         "quota_remaining": quota["remaining"] if quota else None,
         "quota_used": quota["used"] if quota else None,
-        "quota_days_remaining": quota_days_remaining,
+        "quota_total": quota_total,
+        "quota_pct_used": quota_pct_used,
         "pinnacle_stale_sec": 60,
         "matches": match_rows,
         "fmt_t": _fmt_t,
