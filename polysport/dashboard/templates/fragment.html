@@ -1,9 +1,9 @@
 {# KPI strip — single uniform grid so row 1 and row 2 share the same column rhythm #}
 <div class="kpi-grid">
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite" aria-label="Logger health: {{ 'healthy, last poll ' + ('%.0f'|format(state.last_poll_age_sec)) + ' seconds ago' if state.logger_healthy and state.last_poll_age_sec is not none else ('stale' if not state.logger_healthy else 'no polls yet') }}">
     <div class="kpi-label">Logger</div>
     <div class="kpi-value {% if state.logger_healthy %}good{% else %}bad{% endif %}">
-      <span class="pulse {% if not state.logger_healthy %}dead{% endif %}"></span>{{ 'OK' if state.logger_healthy else 'STALE' }}
+      <span class="pulse {% if not state.logger_healthy %}dead{% endif %}" aria-hidden="true"></span>{{ 'OK' if state.logger_healthy else 'STALE' }}
     </div>
     <div class="kpi-sub">
       {% if state.last_poll_age_sec is not none %}
@@ -14,7 +14,7 @@
     </div>
   </div>
 
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite">
     <div class="kpi-label">Matcher join</div>
     {% set match_bad = state.n_expected > 0 and state.n_matched < state.n_expected %}
     <div class="kpi-value {% if state.n_expected == 0 %}{% elif match_bad %}caution{% else %}good{% endif %}">
@@ -47,7 +47,7 @@
     <div class="kpi-sub">max signed div · threshold {{ '%.0f'|format(state.entry_div_cents) }}¢</div>
   </div>
 
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite">
     <div class="kpi-label">Unresolved names</div>
     <div class="kpi-value {% if state.unresolved_count > 0 %}bad{% else %}good{% endif %}">
       {{ state.unresolved_count }}
@@ -55,7 +55,7 @@
     <div class="kpi-sub">should be 0</div>
   </div>
 
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite">
     <div class="kpi-label">Incomplete markets</div>
     <div class="kpi-value {% if state.n_incomplete_markets > 0 %}bad{% else %}good{% endif %}">
       {{ state.n_incomplete_markets }}
@@ -93,7 +93,7 @@
 
 {# Section bar #}
 <div class="section-bar">
-  <span class="section-label">Live matches</span>
+  <h2 class="section-label">Live matches</h2>
   <span class="section-meta">server time (IL) {{ state.now_local }} · refreshes every 15s</span>
 </div>
 
@@ -112,18 +112,18 @@
 <table class="matches">
 <thead>
   <tr>
-    <th>Kickoff (IL)</th>
-    <th>T</th>
-    <th>Pin age</th>
-    <th>League</th>
-    <th>Match</th>
-    <th class="end">Fair H / D / A</th>
-    <th class="end">Mid H / D / A</th>
-    <th class="end">Spread ¢</th>
-    <th class="end">Depth $</th>
-    <th class="end">Div ¢ H / D / A</th>
-    <th class="end">Best</th>
-    <th>Signal</th>
+    <th scope="col">Kickoff (IL)</th>
+    <th scope="col">T</th>
+    <th scope="col">Pin age</th>
+    <th scope="col">League</th>
+    <th scope="col">Match</th>
+    <th scope="col" class="end">Fair H / D / A</th>
+    <th scope="col" class="end">Mid H / D / A</th>
+    <th scope="col" class="end">Spread ¢</th>
+    <th scope="col" class="end">Depth $</th>
+    <th scope="col" class="end">Div ¢ H / D / A</th>
+    <th scope="col" class="end">Best</th>
+    <th scope="col">Signal</th>
   </tr>
 </thead>
 <tbody>
@@ -154,7 +154,7 @@
     {%- endif -%}
   </td>
   <td><span class="league league-{{ league_info[0] }}">{{ league_info[1] }}</span></td>
-  <td>
+  <td class="match-cell">
     <span class="team-home">{{ m.home }}</span>
     <span class="vs-sep">vs</span>
     <span class="team-away">{{ m.away }}</span>
@@ -261,11 +261,11 @@
 </details>
 {% else %}
 <div class="empty-state">
-  <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
     <circle cx="20" cy="20" r="16" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
     <path d="M13 20h14M20 13v14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.3"/>
   </svg>
-  <div style="margin-top:1rem;font-weight:500;color:var(--muted)">No live matches</div>
-  <div style="font-size:0.8rem;color:var(--muted);margin-top:0.3rem;opacity:0.6">Logger may be in its inactive window (00:00–14:00 IL) or between polls.</div>
+  <div class="empty-state__label">No live matches</div>
+  <div class="empty-state__hint">Logger may be in its inactive window (00:00–14:00 IL) or between polls.</div>
 </div>
 {% endif %}

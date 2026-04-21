@@ -12,8 +12,6 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 
   <style>
@@ -32,6 +30,11 @@
       --red-dim:    rgba(224, 82, 82, 0.10);
       --amber:      #d4a418;
       --amber-dim:  rgba(212, 164, 24, 0.10);
+      --red-border-alert: rgba(224, 82, 82, 0.35);
+      --red-bg-alert:     rgba(224, 82, 82, 0.06);
+      --hover-overlay:    rgba(255, 255, 255, 0.022);
+      --in-window-bg:     rgba(212, 164, 24, 0.04);
+      --in-window-bg-hover: rgba(212, 164, 24, 0.06);
       --font-ui:    'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       --font-num:   'DM Mono', 'SF Mono', 'Courier New', monospace;
       --radius-sm:  4px;
@@ -49,8 +52,24 @@
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
-    body { min-height: 100vh; font-variant-numeric: tabular-nums; }
-    .container-fluid { max-width: 1800px; }
+    body { min-height: 100vh; font-variant-numeric: tabular-nums; margin: 0; }
+    *, *::before, *::after { box-sizing: border-box; }
+
+    /* Utility shims (replaces the handful of Bootstrap utility classes used below) */
+    .container-fluid {
+      width: 100%;
+      max-width: 1800px;
+      margin-right: auto;
+      margin-left: auto;
+      padding-right: 0.75rem;
+      padding-left: 0.75rem;
+    }
+    .px-4 { padding-right: 1.5rem; padding-left: 1.5rem; }
+    .d-flex { display: flex; }
+    .align-items-start { align-items: flex-start; }
+    .justify-content-between { justify-content: space-between; }
+    .flex-wrap { flex-wrap: wrap; }
+    .gap-3 { gap: 1rem; }
 
     .mono, .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
 
@@ -72,6 +91,7 @@
       letter-spacing: -0.005em;
       line-height: 1.1;
       color: var(--text-bright);
+      margin: 0;
     }
     .brand-sub {
       font-size: 0.8rem;
@@ -136,13 +156,9 @@
       border-radius: var(--radius-lg);
       padding: 1rem 1.1rem;
       height: 100%;
-      transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+      transition: border-color var(--transition);
     }
-    .kpi:hover {
-      border-color: var(--border2);
-      transform: translateY(-1px);
-      box-shadow: 0 4px 16px rgba(0,0,0,0.25);
-    }
+    .kpi:hover { border-color: var(--border2); }
     .kpi-label {
       font-family: var(--font-ui);
       font-size: 0.656rem;  /* 10.5px */
@@ -191,6 +207,14 @@
     }
     .flash-update { animation: flashUpdate 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
+    @media (prefers-reduced-motion: reduce) {
+      .pulse { animation: none; }
+      .flash-update { animation: none; }
+      .kpi { transition: none; }
+      table.matches tbody tr { transition: none; }
+      .legend-panel summary::before { transition: none; }
+    }
+
     /* ─── Section bar above table ────────────────────────────────────── */
     .section-bar {
       display: flex;
@@ -207,6 +231,7 @@
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: var(--muted);
+      margin: 0;
     }
     .section-meta {
       font-family: var(--font-num);
@@ -253,13 +278,13 @@
       transition: background-color var(--transition);
     }
     table.matches tbody tr:hover {
-      background: rgba(255,255,255,0.022);
+      background: var(--hover-overlay);
     }
     table.matches tbody tr.in-window {
-      background: rgba(212,164,24,0.04);
+      background: var(--in-window-bg);
     }
     table.matches tbody tr.in-window:hover {
-      background: rgba(212,164,24,0.06);
+      background: var(--in-window-bg-hover);
     }
     table.matches tbody tr.buy {
       box-shadow: inset 3px 0 0 var(--green);
@@ -296,17 +321,20 @@
     .t-pill.live   { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(224,82,82,0.25); }
 
     /* Team names */
+    .match-cell { max-width: 22rem; }
     .team-home {
       font-family: var(--font-ui);
       font-weight: 600;
       font-size: 0.92rem;
       color: var(--text-bright);
+      overflow-wrap: anywhere;
     }
     .team-away {
       font-family: var(--font-ui);
       font-weight: 400;
       font-size: 0.92rem;
       color: var(--text);
+      overflow-wrap: anywhere;
     }
     .vs-sep { color: var(--muted); font-size: 0.8rem; margin: 0 0.35rem; }
 
@@ -389,7 +417,10 @@
       letter-spacing: 0.1em;
       text-transform: uppercase;
       color: var(--muted);
-      padding: 0.3rem 0;
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      padding: 0.25rem 0.25rem 0.25rem 0;
     }
     .legend-panel summary::-webkit-details-marker { display: none; }
     .legend-panel summary::before {
@@ -428,8 +459,32 @@
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
     }
+    .empty-state--error {
+      border-color: var(--red-border-alert);
+      background: var(--red-bg-alert);
+    }
+    .empty-state__title {
+      font-weight: 600;
+      color: var(--red);
+      letter-spacing: 0.02em;
+    }
+    .empty-state__body {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.3rem;
+    }
+    .empty-state__hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.3rem;
+      opacity: 0.6;
+    }
+    .empty-state__label {
+      margin-top: 1rem;
+      font-weight: 500;
+      color: var(--muted);
+    }
 
-    /* Overrides for Bootstrap */
     .table-responsive { overflow-x: auto; }
   </style>
 </head>
@@ -439,7 +494,7 @@
     <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
       <div class="brand">
         <span class="brand-mark">
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="PolySport">
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
             <circle cx="14" cy="14" r="12" stroke="currentColor" stroke-width="1.5"/>
             <polygon points="14,7 17.5,10 16.5,14.5 11.5,14.5 10.5,10" stroke="currentColor" stroke-width="1.2" fill="none"/>
             <line x1="10.5" y1="10" x2="7" y2="13" stroke="currentColor" stroke-width="1.2"/>
@@ -450,7 +505,7 @@
           </svg>
         </span>
         <div>
-          <div class="brand-name">PolySport</div>
+          <h1 class="brand-name">PolySport</h1>
           <div class="brand-sub">Phase 1 — live divergence monitor (Pinnacle vs Polymarket)</div>
         </div>
       </div>
@@ -470,24 +525,24 @@
     </div>
   </header>
 
-  <div id="content"
-       hx-get="/fragment"
-       hx-trigger="load, every 15s"
-       hx-swap="innerHTML"
-       hx-on:htmx:response-error="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML"
-       hx-on:htmx:send-error="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML"
-       hx-on:htmx:timeout="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML">
-    <div class="empty-state">
-      <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+  <main id="content"
+        hx-get="/fragment"
+        hx-trigger="load, every 15s"
+        hx-swap="innerHTML"
+        hx-on:htmx:response-error="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML"
+        hx-on:htmx:send-error="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML"
+        hx-on:htmx:timeout="document.getElementById('content').innerHTML = document.getElementById('fragment-error').innerHTML">
+    <div class="empty-state" role="status" aria-live="polite">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
         <circle cx="20" cy="20" r="16" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
       </svg>
-      <div style="margin-top:1rem;font-weight:500;color:var(--muted)">loading…</div>
+      <div class="empty-state__label">loading…</div>
     </div>
-  </div>
+  </main>
   <template id="fragment-error">
-    <div class="empty-state" style="border-color:rgba(224,82,82,0.35);background:rgba(224,82,82,0.06)">
-      <div style="font-weight:600;color:var(--red);letter-spacing:0.02em">⚠ Dashboard fetch failed</div>
-      <div style="font-size:0.8rem;color:var(--muted);margin-top:0.3rem">
+    <div class="empty-state empty-state--error">
+      <div class="empty-state__title">⚠ Dashboard fetch failed</div>
+      <div class="empty-state__body">
         /fragment returned an error. Check Railway logs for the dashboard service.
         Retrying every 15s.
       </div>
@@ -496,15 +551,38 @@
 </div>
 
 <script>
-  document.addEventListener('htmx:afterSwap', function(e) {
-    if (e.detail.target.id === 'content') {
-      document.querySelectorAll('.kpi-value').forEach(function(el) {
-        el.classList.remove('flash-update');
-        void el.offsetWidth;
-        el.classList.add('flash-update');
+  // Flash only the KPI tiles whose text content actually changed on a swap.
+  // Keyed by the tile's kpi-label so the slot survives re-render.
+  (function() {
+    var lastValues = {};
+    function snapshot() {
+      var snap = {};
+      document.querySelectorAll('#content .kpi').forEach(function(tile) {
+        var label = tile.querySelector('.kpi-label');
+        var value = tile.querySelector('.kpi-value');
+        if (label && value) snap[label.textContent.trim()] = value.textContent.trim();
       });
+      return snap;
     }
-  });
+    document.addEventListener('htmx:beforeSwap', function(e) {
+      if (e.detail.target.id === 'content') lastValues = snapshot();
+    });
+    document.addEventListener('htmx:afterSwap', function(e) {
+      if (e.detail.target.id !== 'content') return;
+      document.querySelectorAll('#content .kpi').forEach(function(tile) {
+        var label = tile.querySelector('.kpi-label');
+        var value = tile.querySelector('.kpi-value');
+        if (!label || !value) return;
+        var key = label.textContent.trim();
+        var now = value.textContent.trim();
+        if (lastValues[key] !== undefined && lastValues[key] !== now) {
+          value.classList.remove('flash-update');
+          void value.offsetWidth;
+          value.classList.add('flash-update');
+        }
+      });
+    });
+  })();
 </script>
 </body>
 </html>
