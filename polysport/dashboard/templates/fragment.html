@@ -101,12 +101,8 @@
     <th scope="col">Pin age</th>
     <th scope="col">League</th>
     <th scope="col">Match</th>
-    <th scope="col" class="end">Fair H / D / A</th>
-    <th scope="col" class="end">Mid H / D / A</th>
-    <th scope="col" class="end">Spread ¢</th>
-    <th scope="col" class="end">Depth $</th>
-    <th scope="col" class="end">Div ¢ H / D / A</th>
     <th scope="col" class="end">Best</th>
+    <th scope="col" class="end">Spread · Depth</th>
     <th scope="col">Signal</th>
   </tr>
 </thead>
@@ -119,6 +115,13 @@
   {% set row_classes = [] %}
   {% if m.in_window %}{% set _ = row_classes.append('in-window') %}{% endif %}
   {% if m.action_kind == 'buy' %}{% set _ = row_classes.append('buy') %}{% endif %}
+  {# Depth & fair/mid reflect the BEST side — the one that actually drives the signal.
+     Fallback to home so SKIP rows still carry useful context. #}
+  {% set focus_side = m.best_side if m.best_side else 'home' %}
+  {% set focus_o = m.outcomes[focus_side] %}
+  {# Spread is a book property, not side-specific; use home's, fall back to first non-null. #}
+  {% set spread_val = m.outcomes.home.spread if m.outcomes.home.spread is not none
+     else (m.outcomes.draw.spread if m.outcomes.draw.spread is not none else m.outcomes.away.spread) %}
 <tr class="{{ ' '.join(row_classes) }}">
   <td>
     <div class="kickoff-date">{{ parts[0] }}</div>
@@ -128,13 +131,13 @@
   <td>
     {%- set age = m.pin_age_sec -%}
     {%- if age is none -%}
-      <span class="t-pill pre">—</span>
+      <span class="age-chip none">—</span>
     {%- elif age < 30 -%}
-      <span class="t-pill" style="background:rgba(78,186,111,0.1);color:var(--green);border:1px solid rgba(78,186,111,0.25)">{{ '%.0f'|format(age) }}s</span>
+      <span class="age-chip fresh">{{ '%.0f'|format(age) }}s</span>
     {%- elif age < state.pinnacle_stale_sec -%}
-      <span class="t-pill window">{{ '%.0f'|format(age) }}s</span>
+      <span class="age-chip warn">{{ '%.0f'|format(age) }}s</span>
     {%- else -%}
-      <span class="t-pill live">{{ '%.0f'|format(age) }}s</span>
+      <span class="age-chip stale">{{ '%.0f'|format(age) }}s</span>
     {%- endif -%}
   </td>
   <td><span class="league league-{{ league_info[0] }}">{{ league_info[1] }}</span></td>
@@ -144,77 +147,40 @@
     <span class="team-away">{{ m.away }}</span>
   </td>
 
-  {# Fair H/D/A stacked #}
-  <td class="end stack">
-    <div>{{ '%.3f'|format(m.outcomes.home.fair) }}</div>
-    <div class="dim">{{ '%.3f'|format(m.outcomes.draw.fair) }}</div>
-    <div>{{ '%.3f'|format(m.outcomes.away.fair) }}</div>
-  </td>
-
-  {# Mid H/D/A stacked #}
-  <td class="end stack">
-    {% for side in ['home', 'draw', 'away'] %}
-      {% set o = m.outcomes[side] %}
-      <div class="{% if side == 'draw' %}dim{% endif %}">
-        {% if o.mid is not none %}{{ '%.3f'|format(o.mid) }}{% else %}<span class="muted">—</span>{% endif %}
-      </div>
-    {% endfor %}
-  </td>
-
-  {# Spread — single dominant value (home's). Fall back to first non-null. #}
-  {% set spread_val = m.outcomes.home.spread if m.outcomes.home.spread is not none
-     else (m.outcomes.draw.spread if m.outcomes.draw.spread is not none else m.outcomes.away.spread) %}
-  <td class="end">
-    {% if spread_val is not none %}
-      <span class="spread-cell {% if spread_val > 0.015 %}wide{% endif %}">{{ '%.1f'|format(spread_val * 100) }}</span>
-    {% else %}
-      <span class="spread-cell">—</span>
-    {% endif %}
-  </td>
-
-  {# Depth stacked #}
-  <td class="end stack">
-    {% for side in ['home', 'draw', 'away'] %}
-      {% set o = m.outcomes[side] %}
-      <div>
-        {% if o.depth_min_usd is not none %}
-          <span class="{% if o.depth_min_usd < 500 %}depth-low{% else %}depth-pos{% endif %}">${{ '%.0f'|format(o.depth_min_usd) }}</span>
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
-      </div>
-    {% endfor %}
-  </td>
-
-  {# Div stacked — the most important column #}
-  <td class="end stack div">
-    {% for side in ['home', 'draw', 'away'] %}
-      {% set o = m.outcomes[side] %}
-      <div>
-        {% if o.div is not none %}
-          <span class="{{ 'div-pos' if o.div > 0 else ('div-neg' if o.div < 0 else 'muted') }}{% if o.div is not none and o.div|abs >= 0.02 %} big{% endif %}">
-            {{ '%+.2f'|format(o.div * 100) }}
-          </span>
-        {% else %}
-          <span class="muted">—</span>
-        {% endif %}
-      </div>
-    {% endfor %}
-  </td>
-
-  {# Best #}
+  {# Best — side, signed divergence, fair/mid inline for just that outcome #}
   <td class="end">
     {% if m.best_side %}
-      <div class="best-num {% if m.best_div_cents >= 2 %}div-pos{% elif m.best_div_cents > 0 %}div-pos{% else %}div-neg{% endif %}">
-        {{ '%+.2f'|format(m.best_div_cents) }}¢
+      <div class="best-main">
+        <span class="best-side-label">{{ m.best_side|upper }}</span>
+        <span class="best-num {% if m.best_div_cents > 0 %}div-pos{% else %}div-neg{% endif %}{% if m.best_div_cents|abs >= 2 %} big{% endif %}">
+          {{ '%+.2f'|format(m.best_div_cents) }}¢
+        </span>
       </div>
-      <span class="best-side">{{ m.best_side }}</span>
+      <div class="best-sub">
+        fair {{ '%.3f'|format(focus_o.fair) }}
+        {% if focus_o.mid is not none %} · mid {{ '%.3f'|format(focus_o.mid) }}{% endif %}
+      </div>
     {% else %}
       <span class="muted">—</span>
     {% endif %}
   </td>
 
-  {# Signal chip #}
+  {# Spread · Depth merged (depth is the focus side's conservative min) #}
+  <td class="end sd-cell">
+    {% if spread_val is not none %}
+      <span class="{% if spread_val > 0.015 %}wide{% endif %}">{{ '%.1f'|format(spread_val * 100) }}¢</span>
+    {% else %}
+      <span>—¢</span>
+    {% endif %}
+    <span class="sd-sep">·</span>
+    {% if focus_o.depth_min_usd is not none %}
+      <span class="{% if focus_o.depth_min_usd < 500 %}depth-low{% else %}depth-pos{% endif %}">${{ '{:,.0f}'.format(focus_o.depth_min_usd) }}</span>
+    {% else %}
+      <span>$—</span>
+    {% endif %}
+  </td>
+
+  {# Signal — BUY / SKIP. No reason text — operator knows the rules. #}
   <td>
     {% if m.action_kind == 'buy' %}
       <span class="chip chip-buy">BUY {{ m.action_side|upper }}</span>
@@ -222,7 +188,6 @@
       <span class="chip chip-sell">SELL {{ m.action_side|upper }}</span>
     {% else %}
       <span class="chip chip-skip">SKIP</span>
-      <span class="chip-reason">{{ m.action_reason }}</span>
     {% endif %}
   </td>
 </tr>

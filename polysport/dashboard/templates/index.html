@@ -339,6 +339,23 @@
     .t-pill.window { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(212,164,24,0.25); }
     .t-pill.live   { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(224,82,82,0.25); }
 
+    /* Pin age chip — matches league-chip sizing; semantic by staleness */
+    .age-chip {
+      display: inline-block;
+      font-family: var(--font-num);
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      padding: 0.2em 0.55em;
+      border-radius: var(--radius-sm);
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .age-chip.fresh { background: var(--green-dim); color: var(--green); border: 1px solid rgba(78,186,111,0.25); }
+    .age-chip.warn  { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(212,164,24,0.25); }
+    .age-chip.stale { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(224,82,82,0.25); }
+    .age-chip.none  { background: var(--surface2);  color: var(--muted); border: 1px solid var(--border); }
+
     /* Team names */
     .match-cell { max-width: 22rem; }
     .team-home {
@@ -357,70 +374,60 @@
     }
     .vs-sep { color: var(--muted); font-size: 0.8rem; margin: 0 0.35rem; }
 
-    /* Stacked numeric cells (Fair / Mid / Depth / Div) */
-    .stack {
-      font-family: var(--font-num);
-      font-variant-numeric: tabular-nums;
-      font-size: 0.82rem;
-      line-height: 1.65;
+    /* Best cell — side + signed divergence (large), fair/mid (small) */
+    .best-main {
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      justify-content: flex-end;
     }
-    .stack.div { font-size: 0.86rem; font-weight: 500; }
-    .stack .muted { color: var(--muted); }
-    .stack .dim   { color: var(--muted); }
-
-    .div-pos { color: var(--green); }
-    .div-neg { color: var(--red); }
-    .div-pos.big, .div-neg.big { font-weight: 600; }
-
-    .spread-cell {
-      font-family: var(--font-num);
-      font-size: 0.85rem;
-      color: var(--muted);
-    }
-    .spread-cell.wide { color: var(--amber); }
-
-    .depth-pos { color: var(--muted); }
-    .depth-low { color: var(--amber); }
-
-    .best-num {
-      font-family: var(--font-num);
-      font-size: 1rem;
-      font-weight: 600;
-      line-height: 1.1;
-    }
-    .best-side {
-      display: block;
+    .best-side-label {
       font-family: var(--font-ui);
       font-size: 0.7rem;
+      font-weight: 500;
       color: var(--muted);
-      margin-top: 2px;
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
+    .best-num {
+      font-family: var(--font-num);
+      font-size: 1.05rem;
+      font-weight: 600;
+      line-height: 1.1;
+    }
+    .best-num.big { font-size: 1.15rem; }
+    .best-sub {
+      font-family: var(--font-num);
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-top: 2px;
+      text-align: right;
+    }
+    .div-pos { color: var(--green); }
+    .div-neg { color: var(--red); }
 
-    /* Signal chips */
+    /* Spread · Depth merged cell */
+    .sd-cell { font-family: var(--font-num); font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
+    .sd-sep { color: var(--border2); margin: 0 0.35rem; }
+    .sd-cell .wide      { color: var(--amber); }
+    .sd-cell .depth-low { color: var(--amber); }
+    .sd-cell .depth-pos { color: var(--text); }
+
+    /* Signal chips — prominent on both BUY and SKIP */
     .chip {
       display: inline-block;
       font-family: var(--font-ui);
-      font-size: 0.72rem;
-      font-weight: 600;
+      font-size: 0.82rem;
+      font-weight: 700;
       letter-spacing: 0.06em;
-      padding: 0.3em 0.7em;
+      padding: 0.4em 0.85em;
       border-radius: var(--radius-sm);
       text-transform: uppercase;
       line-height: 1.1;
     }
-    .chip-buy  { background: var(--green-dim); color: var(--green); border: 1px solid rgba(78,186,111,0.3); }
-    .chip-sell { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(212,164,24,0.3); }
-    .chip-skip { background: transparent; color: var(--muted); border: 1px solid var(--border); }
-    .chip-reason {
-      display: block;
-      font-family: var(--font-ui);
-      font-size: 0.72rem;
-      color: var(--muted);
-      margin-top: 4px;
-      font-style: italic;
-    }
+    .chip-buy  { background: var(--green-dim); color: var(--green); border: 1px solid rgba(78,186,111,0.35); }
+    .chip-sell { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(212,164,24,0.35); }
+    .chip-skip { background: transparent;      color: var(--text);  border: 1px solid var(--border2); }
 
     /* ─── Empty state ────────────────────────────────────────────────── */
     .empty-state {
