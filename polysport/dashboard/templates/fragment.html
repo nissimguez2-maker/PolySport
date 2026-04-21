@@ -247,18 +247,6 @@
 </table>
 </div>
 </div>
-
-<details class="legend-panel" open>
-  <summary>Legend</summary>
-  <div class="legend-body">
-    <span class="item"><span class="swatch" style="background:var(--amber)"></span>Highlighted rows sit in the T-120 → T-0 pre-match window (our trade zone)</span>
-    <span class="item"><span class="swatch" style="background:var(--green)"></span>Green div = Polymarket below Pinnacle fair (underpriced, we'd buy)</span>
-    <span class="item"><span class="swatch" style="background:var(--red)"></span>Red div = Polymarket above fair (overpriced, we'd skip)</span>
-    <span class="item"><strong style="color:var(--text)">Bold</strong>&nbsp;= |div| ≥ {{ '%.0f'|format(state.entry_div_cents) }}¢</span>
-    <span class="item"><span class="chip chip-buy">BUY</span>&nbsp;all gates pass (div ≥ 2¢, spread ≤ 3¢, depth ≥ $500, fav prob &lt; 0.80)</span>
-    <span class="item"><span class="chip chip-skip">SKIP</span>&nbsp;shows the first gate it failed</span>
-  </div>
-</details>
 {% else %}
 <div class="empty-state">
   <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
