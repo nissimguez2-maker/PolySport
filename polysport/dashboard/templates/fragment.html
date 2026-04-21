@@ -1,36 +1,5 @@
-{# KPI strip — single uniform grid so row 1 and row 2 share the same column rhythm #}
-<div class="kpi-grid">
-  <div class="kpi" role="status" aria-live="polite" aria-label="Logger health: {{ 'healthy, last poll ' + ('%.0f'|format(state.last_poll_age_sec)) + ' seconds ago' if state.logger_healthy and state.last_poll_age_sec is not none else ('stale' if not state.logger_healthy else 'no polls yet') }}">
-    <div class="kpi-label">Logger</div>
-    <div class="kpi-value {% if state.logger_healthy %}good{% else %}bad{% endif %}">
-      <span class="pulse {% if not state.logger_healthy %}dead{% endif %}" aria-hidden="true"></span>{{ 'OK' if state.logger_healthy else 'STALE' }}
-    </div>
-    <div class="kpi-sub">
-      {% if state.last_poll_age_sec is not none %}
-        last poll {{ '%.0f'|format(state.last_poll_age_sec) }}s ago
-      {% else %}
-        no polls yet
-      {% endif %}
-    </div>
-  </div>
-
-  <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Matcher join</div>
-    {% set match_bad = state.n_expected > 0 and state.n_matched < state.n_expected %}
-    <div class="kpi-value {% if state.n_expected == 0 %}{% elif match_bad %}caution{% else %}good{% endif %}">
-      {{ state.n_matched }} / {{ state.n_expected }}
-    </div>
-    <div class="kpi-sub">Pinnacle → Polymarket joined</div>
-  </div>
-
-  <div class="kpi">
-    <div class="kpi-label">In trade window</div>
-    <div class="kpi-value {% if state.n_in_window > 0 %}caution{% endif %}">
-      {{ state.n_in_window }}
-    </div>
-    <div class="kpi-sub">T−120 → 0 min</div>
-  </div>
-
+{# Tier 1 — the three numbers an operator actually stares at #}
+<div class="kpi-grid-primary">
   <div class="kpi">
     <div class="kpi-label">Would fire now</div>
     <div class="kpi-value {% if state.n_would_fire > 0 %}good{% endif %}">
@@ -47,47 +16,62 @@
     <div class="kpi-sub">max signed div · threshold {{ '%.0f'|format(state.entry_div_cents) }}¢</div>
   </div>
 
-  <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Unresolved names</div>
-    <div class="kpi-value {% if state.unresolved_count > 0 %}bad{% else %}good{% endif %}">
-      {{ state.unresolved_count }}
+  <div class="kpi">
+    <div class="kpi-label">In trade window</div>
+    <div class="kpi-value {% if state.n_in_window > 0 %}caution{% endif %}">
+      {{ state.n_in_window }}
     </div>
-    <div class="kpi-sub">should be 0</div>
+    <div class="kpi-sub">T−120 → 0 min</div>
+  </div>
+</div>
+
+{# Tier 2 — system health strip. Glance, don't dwell. #}
+<div class="kpi-strip">
+  <div class="kpi" role="status" aria-live="polite" aria-label="Logger {{ 'healthy' if state.logger_healthy else 'stale' }}">
+    <div class="kpi-label">Logger</div>
+    <div class="kpi-value {% if state.logger_healthy %}good{% else %}bad{% endif %}">
+      <span class="pulse {% if not state.logger_healthy %}dead{% endif %}" aria-hidden="true"></span>{{ 'OK' if state.logger_healthy else 'STALE' }}{% if state.last_poll_age_sec is not none %} · {{ '%.0f'|format(state.last_poll_age_sec) }}s{% endif %}
+    </div>
   </div>
 
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Incomplete markets</div>
+    <div class="kpi-label">Matcher</div>
+    {% set match_bad = state.n_expected > 0 and state.n_matched < state.n_expected %}
+    <div class="kpi-value {% if state.n_expected == 0 %}{% elif match_bad %}caution{% else %}good{% endif %}">
+      {{ state.n_matched }} / {{ state.n_expected }}
+    </div>
+  </div>
+
+  <div class="kpi" role="status" aria-live="polite">
+    <div class="kpi-label">Incomplete</div>
     <div class="kpi-value {% if state.n_incomplete_markets > 0 %}bad{% else %}good{% endif %}">
       {{ state.n_incomplete_markets }}
     </div>
-    <div class="kpi-sub">should be 0 — else PM regex drift</div>
+  </div>
+
+  <div class="kpi" role="status" aria-live="polite">
+    <div class="kpi-label">Unresolved</div>
+    <div class="kpi-value {% if state.unresolved_count > 0 %}bad{% else %}good{% endif %}">
+      {{ state.unresolved_count }}
+    </div>
   </div>
 
   <div class="kpi">
-    <div class="kpi-label">Odds API quota</div>
+    <div class="kpi-label">Quota</div>
     {% if state.quota_remaining is not none %}
       {% set q_caution = state.quota_remaining < 2000 %}
       {% set q_bad     = state.quota_remaining < 500 %}
       <div class="kpi-value {% if q_bad %}bad{% elif q_caution %}caution{% else %}good{% endif %}">
-        {{ '{:,}'.format(state.quota_remaining) }}
-      </div>
-      <div class="kpi-sub">
-        {{ '{:,}'.format(state.quota_used or 0) }} /
-        {{ '{:,}'.format(state.quota_total) if state.quota_total is not none else '?' }} used
-        {% if state.quota_pct_used is not none %}
-          ({{ '%.0f'|format(state.quota_pct_used) }}%)
-        {% endif %}
+        {{ '{:,}'.format(state.quota_remaining) }}{% if state.quota_pct_used is not none %} · {{ '%.0f'|format(state.quota_pct_used) }}%{% endif %}
       </div>
     {% else %}
       <div class="kpi-value">—</div>
-      <div class="kpi-sub">no quota row yet · logger will write after next paid call</div>
     {% endif %}
   </div>
 
   <div class="kpi">
-    <div class="kpi-label">Total fixtures</div>
+    <div class="kpi-label">Fixtures</div>
     <div class="kpi-value">{{ state.n_matches }}</div>
-    <div class="kpi-sub">across next 7 days</div>
   </div>
 </div>
 
