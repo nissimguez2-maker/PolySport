@@ -66,10 +66,20 @@ FeeFn = Callable[[float, float], float]  # fee_fn(p, notional_usd) -> fee_usd
 
 
 def polymarket_fee_placeholder(p: float, notional_usd: float) -> float:
-    """Placeholder consistent with Polymarket's help-center worked example
-    (100 shares @ $0.50 → ~$0.38 fee, i.e. ~0.75% of $50 notional, which
-    is the peak). Symmetric around p=0.50."""
-    return notional_usd * 0.03 * p * (1 - p)
+    """Calibrated from one live La Liga fill (2026-04-22):
+      Buy 10.7 shares at $0.47 for $5.00 → $5.00 paid.
+      Sell 10.7 shares at $0.44 for $4.73 → gross price move -$0.27,
+        no visible fee leakage inside the rounded prices.
+
+    Interpretation: round-trip fee ≈ 1.0% of notional, i.e. ≈0.5% per
+    taker leg, flat in price p (not probability-weighted as the docs
+    formula or the help-center worked example would suggest).
+
+    This supersedes the earlier placeholder that used 3% × p × (1-p) of
+    notional. That formula produced 0.75% per leg at p=0.50; the live
+    fill data sits below that. The flat 0.5% is the honest number until
+    we have more fills to regress against."""
+    return notional_usd * 0.005
 
 
 def zero_fee(_p: float, _notional_usd: float) -> float:
