@@ -6,7 +6,11 @@ to measure whether ≥30% of monitored matches touch |div| ≥ 2¢ in the
 T-120→T+0min window. If they do, the strategy is viable.
 
 Design:
-  - Poll each target league every POLL_INTERVAL seconds.
+  - Poll each target league every POLL_INTERVAL seconds. Cadence is tiered:
+    coarse (60s default) for T-180 → T-60, fine (30s default) for T-60 →
+    kickoff. Rationale: credits are scarce and divergence moves slowly
+    early in the window, but the final hour is where edges actually
+    appear/vanish as Pinnacle re-vigs into the close.
   - For each poll cycle, for each league:
       1. Fetch Odds API /odds → write one row per bookmaker per event to
          odds_api_snapshots.
@@ -18,9 +22,17 @@ Design:
   - Never crash the loop: catch per-league errors, log, continue.
   - Never burn quota uselessly: skip events kicking off > TIME_HORIZON_HOURS ahead.
 
-Quota math (for Phase 1 default leagues = EPL + UCL):
-  2 leagues × (60s / POLL_INTERVAL) calls/min × 60 min × 48 h = 11,520 Odds API
-  calls at 30s cadence. Well inside the 20,000/mo Starter quota.
+Cadence config (env-var overridable at the top of this file):
+  POLL_INTERVAL_COARSE_SEC=60   poll interval for T-180 → T-60 matches
+  POLL_INTERVAL_FINE_SEC=30     poll interval once any match enters T-60 → kickoff
+  POLL_FINE_THRESHOLD_MIN=60    minutes-to-kick boundary between the two bands
+
+Quota math (illustrative, 6 default leagues, mixed evening EU slate):
+  Coarse band: 1 call / match / 60s * 120 min window-depth avg / match ≈ 120 calls.
+  Fine band overrides the final hour: that hour becomes 2 calls/min, so +60 extra.
+  Per-match spend roughly 120 + 60 = 180 credits in fully-in-window evening games.
+  At ~216 matches/month typical across 6 EU leagues, spend ≈ 30-38k credits/mo —
+  right at the 30k tier boundary. See STRATEGY.md "Timing" for the reasoning.
 """
 
 from __future__ import annotations
@@ -55,7 +67,13 @@ from polysport.feeds.polymarket import (  # noqa: E402
 )
 
 DEFAULT_LEAGUES = ["epl", "ucl", "ligue1", "seriea", "laliga", "bundesliga"]
-POLL_INTERVAL_SEC = 60
+
+# Cadence config. Env vars win over the defaults so Railway can tune without
+# redeploying code. Tiered: coarse far from kickoff, fine in the final hour.
+POLL_INTERVAL_COARSE_SEC = int(os.getenv("POLL_INTERVAL_COARSE_SEC", "60"))
+POLL_INTERVAL_FINE_SEC   = int(os.getenv("POLL_INTERVAL_FINE_SEC",   "30"))
+POLL_FINE_THRESHOLD_MIN  = int(os.getenv("POLL_FINE_THRESHOLD_MIN",  "60"))
+
 TRADE_WINDOW_MIN = 120           # poll /events/{id}/odds only for matches kicking off within this many min
 SCHEDULE_SCAN_EVERY_SEC = 600    # free /events refresh cadence (10 min)
 QUOTA_WARN_THRESHOLD = 500       # warn once Odds API remaining drops below this
@@ -134,6 +152,25 @@ def _in_trade_window(commence_iso: str, window_min: int = TRADE_WINDOW_MIN) -> b
     """True iff kickoff is within [0, window_min] minutes ahead."""
     m = _minutes_to_kick(commence_iso)
     return m is not None and 0.0 <= m <= window_min
+
+
+def _cadence_for_cycle(schedule: dict[str, list[EventSummary]],
+                       *, coarse_sec: int, fine_sec: int,
+                       fine_threshold_min: int) -> int:
+    """Pick the poll interval for the next cycle based on how close the
+    nearest in-window match is to kickoff. Fine cadence kicks in once any
+    match sits in T-<fine_threshold_min> → kickoff."""
+    min_minutes = None
+    for evs in schedule.values():
+        for ev in evs:
+            m = _minutes_to_kick(ev.commence_time)
+            if m is None or m < 0 or m > TRADE_WINDOW_MIN:
+                continue
+            if min_minutes is None or m < min_minutes:
+                min_minutes = m
+    if min_minutes is not None and min_minutes <= fine_threshold_min:
+        return fine_sec
+    return coarse_sec
 
 
 def poll_schedule(http: httpx.Client, api_key: str,
@@ -375,8 +412,21 @@ def main() -> int:
     parser.add_argument("--leagues", nargs="+", default=DEFAULT_LEAGUES,
                         help=f"League slugs to poll. Default: {DEFAULT_LEAGUES}. "
                              f"Valid: {list(LEAGUE_TO_SPORT_KEY)}")
-    parser.add_argument("--interval", type=int, default=POLL_INTERVAL_SEC,
-                        help=f"Seconds between polls. Default: {POLL_INTERVAL_SEC}")
+    parser.add_argument("--interval-coarse", type=int, default=POLL_INTERVAL_COARSE_SEC,
+                        help=f"Seconds between polls for matches further than "
+                             f"--fine-threshold minutes from kickoff. "
+                             f"Default: {POLL_INTERVAL_COARSE_SEC} "
+                             f"(env POLL_INTERVAL_COARSE_SEC).")
+    parser.add_argument("--interval-fine", type=int, default=POLL_INTERVAL_FINE_SEC,
+                        help=f"Seconds between polls once any match is inside "
+                             f"--fine-threshold minutes of kickoff. "
+                             f"Default: {POLL_INTERVAL_FINE_SEC} "
+                             f"(env POLL_INTERVAL_FINE_SEC).")
+    parser.add_argument("--fine-threshold", type=int, default=POLL_FINE_THRESHOLD_MIN,
+                        help=f"Minutes-to-kick boundary: at or below this, "
+                             f"cadence switches from coarse to fine. "
+                             f"Default: {POLL_FINE_THRESHOLD_MIN} "
+                             f"(env POLL_FINE_THRESHOLD_MIN).")
     parser.add_argument("--once", action="store_true",
                         help="Run a single cycle and exit (for smoke tests).")
     parser.add_argument("--duration-hours", type=float, default=48.0,
@@ -417,7 +467,8 @@ def main() -> int:
         return f"{hh:02d}:{mm:02d}"
 
     print(f"Phase 1 logger starting. leagues={args.leagues} "
-          f"interval={args.interval}s schedule-scan-every={args.schedule_scan_every}s "
+          f"cadence=coarse:{args.interval_coarse}s/fine:{args.interval_fine}s@T-{args.fine_threshold}m "
+          f"schedule-scan-every={args.schedule_scan_every}s "
           f"trade-window={TRADE_WINDOW_MIN}m duration={args.duration_hours}h "
           f"active={_fmt_hm(args.active_hours_start)}–{_fmt_hm(args.active_hours_end)} "
           f"{args.timezone} once={args.once}", flush=True)
@@ -473,15 +524,22 @@ def main() -> int:
                 schedule = poll_schedule(http, api_key, args.leagues)
                 last_scan_at = now_mono
 
+            cadence_sec = _cadence_for_cycle(
+                schedule,
+                coarse_sec=args.interval_coarse,
+                fine_sec=args.interval_fine,
+                fine_threshold_min=args.fine_threshold,
+            )
             cycle_start = time.monotonic()
-            print(f"\n--- cycle @ {datetime.now(timezone.utc).isoformat()} ---",
-                  flush=True)
+            print(f"\n--- cycle @ {datetime.now(timezone.utc).isoformat()} "
+                  f"cadence={cadence_sec}s ---", flush=True)
             one_cycle(sb, http, matcher, api_key, args.leagues, schedule)
             elapsed = time.monotonic() - cycle_start
-            if elapsed > args.interval:
-                print(f"WARN: cycle took {elapsed:.1f}s > interval {args.interval}s "
-                      f"— running hot, consider raising --interval", flush=True)
-            sleep_for = max(0.0, args.interval - elapsed)
+            if elapsed > cadence_sec:
+                print(f"WARN: cycle took {elapsed:.1f}s > cadence {cadence_sec}s "
+                      f"— running hot, consider raising cadence or trimming leagues",
+                      flush=True)
+            sleep_for = max(0.0, cadence_sec - elapsed)
             if _stop:
                 break
             # Sleep in small slices so SIGTERM preempts promptly.
