@@ -280,13 +280,15 @@ def get_live_state(sb) -> dict:
         )
     )
 
-    last_poll = None
-    if pin_rows:
-        last_poll = _parse_ts(pin_rows[0]["polled_at"])
-    if pm_rows:
-        p = _parse_ts(pm_rows[0]["polled_at"])
-        if p and (last_poll is None or p > last_poll):
-            last_poll = p
+    # Per-feed freshness — the original `last_poll_age` was the max of both
+    # feeds, which means a Pinnacle-only stream with a dead Polymarket leg
+    # would still report logger_healthy=True. Surface each feed's last poll
+    # separately so the dashboard can flag a one-sided outage.
+    last_pin = _parse_ts(pin_rows[0]["polled_at"]) if pin_rows else None
+    last_pm = _parse_ts(pm_rows[0]["polled_at"]) if pm_rows else None
+    pin_age_sec = (now - last_pin).total_seconds() if last_pin else None
+    pm_age_sec = (now - last_pm).total_seconds() if last_pm else None
+    last_poll = max((p for p in (last_pin, last_pm) if p is not None), default=None)
     last_poll_age_sec = (now - last_poll).total_seconds() if last_poll else None
 
     n_would_fire = sum(1 for m in match_rows if m.action_kind == "buy")
@@ -325,10 +327,22 @@ def get_live_state(sb) -> dict:
         if quota_total > 0:
             quota_pct_used = 100.0 * quota["used"] / quota_total
 
+    # Both feeds must be fresh for logger to be considered healthy. A stale
+    # Polymarket leg with a fresh Pinnacle leg means every divergence reading
+    # is computed against an old PM mid — silently invalid.
+    feeds_healthy = (
+        pin_age_sec is not None
+        and pin_age_sec < 120
+        and pm_age_sec is not None
+        and pm_age_sec < 120
+    )
+
     return {
         "now_local": now.astimezone(ISRAEL_TZ).strftime("%H:%M:%S"),
         "last_poll_age_sec": last_poll_age_sec,
-        "logger_healthy": last_poll_age_sec is not None and last_poll_age_sec < 120,
+        "pin_age_sec": pin_age_sec,
+        "pm_age_sec": pm_age_sec,
+        "logger_healthy": feeds_healthy,
         "n_matches": len(match_rows),
         "n_in_window": n_in_window,
         "n_would_fire": n_would_fire,
