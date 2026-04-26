@@ -1,0 +1,54 @@
+[project]
+name = "polysport"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["polysport", "scripts", "tests"]
+extend-exclude = [".venv", "__pycache__", "migrations"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "B008",   # function calls in argument defaults (FastAPI uses these)
+    "RUF001", # ambiguous unicode in strings (we use real typography: × – −)
+    "RUF002", # ambiguous unicode in docstrings
+    "RUF003", # ambiguous unicode in comments
+    "RUF046", # int() on already-int — cosmetic
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["T201"]   # allow print() in scripts
+"tests/*" = ["S101"]     # allow assert in tests
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["polysport", "scripts"]
+exclude = ["__pycache__", "\\.venv"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_redundant_casts = true
+no_implicit_optional = true
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+pythonpath = ["."]

@@ -1,0 +1,73 @@
+### Polymarket + Odds API + Supabase REST quick-call sheet.
+### Requires the REST Client extension (humao.rest-client).
+### Env vars resolve from .env via `{{$dotenv VAR_NAME}}`.
+
+@odds_key = {{$dotenv ODDS_API_KEY}}
+@sb_url = {{$dotenv SUPABASE_URL}}
+@sb_key = {{$dotenv SUPABASE_SERVICE_KEY}}
+
+
+### --- Polymarket Gamma API ---
+
+### Active soccer markets (top 25)
+GET https://gamma-api.polymarket.com/markets?active=true&closed=false&tag=Soccer&limit=25
+Accept: application/json
+
+### One market by slug
+@market_slug = REPLACE_WITH_SLUG
+GET https://gamma-api.polymarket.com/markets?slug={{market_slug}}
+Accept: application/json
+
+
+### --- Polymarket CLOB (order book) ---
+
+### Order book for a YES/NO token
+@token_id = REPLACE_WITH_TOKEN_ID
+GET https://clob.polymarket.com/book?token_id={{token_id}}
+Accept: application/json
+
+### Midpoint
+GET https://clob.polymarket.com/midpoint?token_id={{token_id}}
+Accept: application/json
+
+
+### --- The Odds API ---
+
+### Available sports
+GET https://api.the-odds-api.com/v4/sports?apiKey={{odds_key}}
+
+### EPL h2h odds, Pinnacle only
+GET https://api.the-odds-api.com/v4/sports/soccer_epl/odds?apiKey={{odds_key}}&regions=eu&markets=h2h&bookmakers=pinnacle
+
+### Champions League h2h odds, Pinnacle only
+GET https://api.the-odds-api.com/v4/sports/soccer_uefa_champs_league/odds?apiKey={{odds_key}}&regions=eu&markets=h2h&bookmakers=pinnacle
+
+### Quota usage (response headers x-requests-remaining / x-requests-used)
+GET https://api.the-odds-api.com/v4/sports?apiKey={{odds_key}}
+
+
+### --- Supabase REST ---
+
+### Row count: odds_api_snapshots
+GET {{sb_url}}/rest/v1/odds_api_snapshots?select=id
+apikey: {{sb_key}}
+Authorization: Bearer {{sb_key}}
+Prefer: count=exact
+Range: 0-0
+
+### Row count: polymarket_snapshots
+GET {{sb_url}}/rest/v1/polymarket_snapshots?select=id
+apikey: {{sb_key}}
+Authorization: Bearer {{sb_key}}
+Prefer: count=exact
+Range: 0-0
+
+### Most recent pinnacle row
+GET {{sb_url}}/rest/v1/odds_api_snapshots?select=polled_at,home_team_id,away_team_id&bookmaker=eq.pinnacle&order=polled_at.desc&limit=1
+apikey: {{sb_key}}
+Authorization: Bearer {{sb_key}}
+
+### Top unresolved entities
+GET {{sb_url}}/rest/v1/unresolved_entities?select=raw_name,source,occurrences&order=occurrences.desc&limit=20
+apikey: {{sb_key}}
+Authorization: Bearer {{sb_key}}
