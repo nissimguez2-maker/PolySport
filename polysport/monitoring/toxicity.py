@@ -43,7 +43,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-
 # Minimum fills required before the module will return a baseline or a
 # threshold-based status. See STRATEGY.md — the audit recommended 50-100;
 # we default to the low end so calibration finishes in ~1 week of
@@ -54,7 +53,7 @@ MIN_CALIBRATION_FILLS = 50
 # elevated. From the audit: "raise the toxicity kill threshold to
 # baseline + 3pp, and the tighten-spread threshold to baseline + 2pp".
 TIGHTEN_DELTA_PP = 2
-KILL_DELTA_PP    = 3
+KILL_DELTA_PP = 3
 
 # How far Pinnacle fair must move against the filled position within the
 # post-fill window for the fill to count as "toxic". 0.5c per STRATEGY.md.
@@ -71,13 +70,14 @@ class FillRecord:
     Adverse-selection verdict is computed on read, not at write time, so
     the definition can evolve without rewriting history.
     """
-    filled_at_iso:       str     # ISO-8601, fill timestamp
-    side:                Literal["buy", "sell"]
-    price:               float   # fill price, 0–1
-    pinnacle_fair_at_fill:        float   # fair value at moment of fill
-    pinnacle_fair_60s_after:      float | None  # fair 60s post-fill, or None if feed gap
-    match_id:            str     # for join with snapshot tables later
-    outcome_side:        Literal["home", "draw", "away"]
+
+    filled_at_iso: str  # ISO-8601, fill timestamp
+    side: Literal["buy", "sell"]
+    price: float  # fill price, 0–1
+    pinnacle_fair_at_fill: float  # fair value at moment of fill
+    pinnacle_fair_60s_after: float | None  # fair 60s post-fill, or None if feed gap
+    match_id: str  # for join with snapshot tables later
+    outcome_side: Literal["home", "draw", "away"]
 
 
 TOXIC_VERDICT = Literal["toxic", "benign", "unknown"]
@@ -105,10 +105,11 @@ class ToxicityTracker:
     """In-process maker-fill log. Phase 2 will back this with Supabase;
     for scaffold purposes we keep it as a list and expose the two reads
     the strategy + dashboard actually need."""
+
     fills: list[FillRecord]
 
     @classmethod
-    def empty(cls) -> "ToxicityTracker":
+    def empty(cls) -> ToxicityTracker:
         return cls(fills=[])
 
     def record_fill(self, record: FillRecord) -> None:
@@ -132,8 +133,7 @@ class ToxicityTracker:
             return None
         return sum(1 for v in classified if v == "toxic") / len(classified)
 
-    def toxicity_status(self) -> Literal["calibrating", "healthy",
-                                          "tighten", "abandon-maker"]:
+    def toxicity_status(self) -> Literal["calibrating", "healthy", "tighten", "abandon-maker"]:
         """Dashboard/strategy-consumable verdict. Intentionally returns
         'calibrating' (not a threshold-driven status) until the baseline
         is established, so the kill switch cannot fire on noise."""

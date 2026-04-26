@@ -29,8 +29,7 @@ app = FastAPI(title="PolySport Live")
 
 
 def _sb():
-    return create_client(os.environ["SUPABASE_URL"],
-                         os.environ["SUPABASE_SERVICE_KEY"])
+    return create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -41,5 +40,4 @@ def index(request: Request):
 @app.get("/fragment", response_class=HTMLResponse)
 def fragment(request: Request):
     state = get_live_state(_sb())
-    return _TEMPLATES.TemplateResponse(
-        request, "fragment.html", {"state": state})
+    return _TEMPLATES.TemplateResponse(request, "fragment.html", {"state": state})

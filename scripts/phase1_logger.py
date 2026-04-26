@@ -44,23 +44,23 @@ import signal
 import sys
 import time
 import traceback
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 from dotenv import load_dotenv
 from supabase import create_client
-from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from polysport.feeds.matcher import TeamMatcher  # noqa: E402
-from polysport.feeds.odds_api import (  # noqa: E402
-    EventSummary,
+from polysport.feeds.matcher import TeamMatcher
+from polysport.feeds.odds_api import (
     LEAGUE_TO_SPORT_KEY,
+    EventSummary,
     fetch_events_for_league,
     fetch_odds_for_event,
 )
-from polysport.feeds.polymarket import (  # noqa: E402
+from polysport.feeds.polymarket import (
     extract_moneyline_markets,
     fetch_book,
     list_league_events,
@@ -71,12 +71,12 @@ DEFAULT_LEAGUES = ["epl", "ucl", "ligue1", "seriea", "laliga", "bundesliga"]
 # Cadence config. Env vars win over the defaults so Railway can tune without
 # redeploying code. Tiered: coarse far from kickoff, fine in the final hour.
 POLL_INTERVAL_COARSE_SEC = int(os.getenv("POLL_INTERVAL_COARSE_SEC", "60"))
-POLL_INTERVAL_FINE_SEC   = int(os.getenv("POLL_INTERVAL_FINE_SEC",   "30"))
-POLL_FINE_THRESHOLD_MIN  = int(os.getenv("POLL_FINE_THRESHOLD_MIN",  "60"))
+POLL_INTERVAL_FINE_SEC = int(os.getenv("POLL_INTERVAL_FINE_SEC", "30"))
+POLL_FINE_THRESHOLD_MIN = int(os.getenv("POLL_FINE_THRESHOLD_MIN", "60"))
 
-TRADE_WINDOW_MIN = 120           # poll /events/{id}/odds only for matches kicking off within this many min
-SCHEDULE_SCAN_EVERY_SEC = 600    # free /events refresh cadence (10 min)
-QUOTA_WARN_THRESHOLD = 500       # warn once Odds API remaining drops below this
+TRADE_WINDOW_MIN = 120  # poll /events/{id}/odds only for matches kicking off within this many min
+SCHEDULE_SCAN_EVERY_SEC = 600  # free /events refresh cadence (10 min)
+QUOTA_WARN_THRESHOLD = 500  # warn once Odds API remaining drops below this
 
 # Strip trailing secondary-market tokens from Polymarket titles so the home/away
 # parse only sees moneyline events.
@@ -107,8 +107,9 @@ def _inactive_sleep_seconds(tz: ZoneInfo, start_hour: float, end_hour: float) ->
         return 0.0
     now = datetime.now(tz)
     h = now.hour + now.minute / 60.0 + now.second / 3600.0
-    active = (start_hour <= h < end_hour) if start_hour < end_hour else (
-        h >= start_hour or h < end_hour)
+    active = (
+        (start_hour <= h < end_hour) if start_hour < end_hour else (h >= start_hour or h < end_hour)
+    )
     if active:
         return 0.0
     start_h = int(start_hour)
@@ -124,6 +125,7 @@ def _install_sigterm_handler() -> None:
         global _stop
         _stop = True
         print(f"\n[signal {signum}] draining current cycle then exiting…", flush=True)
+
     signal.signal(signal.SIGINT, handler)
     signal.signal(signal.SIGTERM, handler)
 
@@ -145,7 +147,7 @@ def _minutes_to_kick(commence_iso: str) -> float | None:
     ct = _parse_iso8601(commence_iso)
     if ct is None:
         return None
-    return (ct - datetime.now(timezone.utc)).total_seconds() / 60.0
+    return (ct - datetime.now(UTC)).total_seconds() / 60.0
 
 
 def _in_trade_window(commence_iso: str, window_min: int = TRADE_WINDOW_MIN) -> bool:
@@ -154,9 +156,13 @@ def _in_trade_window(commence_iso: str, window_min: int = TRADE_WINDOW_MIN) -> b
     return m is not None and 0.0 <= m <= window_min
 
 
-def _cadence_for_cycle(schedule: dict[str, list[EventSummary]],
-                       *, coarse_sec: int, fine_sec: int,
-                       fine_threshold_min: int) -> int:
+def _cadence_for_cycle(
+    schedule: dict[str, list[EventSummary]],
+    *,
+    coarse_sec: int,
+    fine_sec: int,
+    fine_threshold_min: int,
+) -> int:
     """Pick the poll interval for the next cycle based on how close the
     nearest in-window match is to kickoff. Fine cadence kicks in once any
     match sits in T-<fine_threshold_min> → kickoff."""
@@ -173,8 +179,9 @@ def _cadence_for_cycle(schedule: dict[str, list[EventSummary]],
     return coarse_sec
 
 
-def poll_schedule(http: httpx.Client, api_key: str,
-                  leagues: list[str]) -> dict[str, list[EventSummary]]:
+def poll_schedule(
+    http: httpx.Client, api_key: str, leagues: list[str]
+) -> dict[str, list[EventSummary]]:
     """Free schedule scan per league. Returns {league_slug: [EventSummary]}."""
     out: dict[str, list[EventSummary]] = {}
     for lg in leagues:
@@ -185,45 +192,63 @@ def poll_schedule(http: httpx.Client, api_key: str,
             last = quota.get("last", "?")
             print(f"  [schedule   {lg:<10}] {len(evs):3d} fixtures  cost={last}", flush=True)
             out[lg] = evs
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(f"  [schedule {lg}] ERROR: {exc!r}", flush=True)
             out[lg] = []
     return out
 
 
-def poll_event_odds(sb, http: httpx.Client, matcher: TeamMatcher,
-                    api_key: str, ev: EventSummary) -> tuple[int, dict[str, str]]:
+def poll_event_odds(
+    sb, http: httpx.Client, matcher: TeamMatcher, api_key: str, ev: EventSummary
+) -> tuple[int, dict[str, str]]:
     """Paid per-event odds poll for one in-window match."""
-    odds_ev, quota = fetch_odds_for_event(http, api_key=api_key,
-                                          sport_key=ev.sport_key, event_id=ev.event_id)
-    home_id = _resolve(matcher, odds_ev.home_team_raw, source="odds_api",
-                       league=ev.league_slug, extra={"event_id": ev.event_id})
-    away_id = _resolve(matcher, odds_ev.away_team_raw, source="odds_api",
-                       league=ev.league_slug, extra={"event_id": ev.event_id})
+    odds_ev, quota = fetch_odds_for_event(
+        http, api_key=api_key, sport_key=ev.sport_key, event_id=ev.event_id
+    )
+    home_id = _resolve(
+        matcher,
+        odds_ev.home_team_raw,
+        source="odds_api",
+        league=ev.league_slug,
+        extra={"event_id": ev.event_id},
+    )
+    away_id = _resolve(
+        matcher,
+        odds_ev.away_team_raw,
+        source="odds_api",
+        league=ev.league_slug,
+        extra={"event_id": ev.event_id},
+    )
     rows = 0
     for bm in odds_ev.bookmakers:
-        sb.table("odds_api_snapshots").insert({
-            "event_id":      odds_ev.event_id,
-            "league_key":    odds_ev.sport_key,
-            "home_team_raw": odds_ev.home_team_raw,
-            "away_team_raw": odds_ev.away_team_raw,
-            "home_team_id":  home_id,
-            "away_team_id":  away_id,
-            "commence_time": odds_ev.commence_time,
-            "bookmaker":     bm.bookmaker,
-            "odds_home":     bm.odds_home,
-            "odds_draw":     bm.odds_draw,
-            "odds_away":     bm.odds_away,
-            "raw":           odds_ev.raw,
-        }).execute()
+        sb.table("odds_api_snapshots").insert(
+            {
+                "event_id": odds_ev.event_id,
+                "league_key": odds_ev.sport_key,
+                "home_team_raw": odds_ev.home_team_raw,
+                "away_team_raw": odds_ev.away_team_raw,
+                "home_team_id": home_id,
+                "away_team_id": away_id,
+                "commence_time": odds_ev.commence_time,
+                "bookmaker": bm.bookmaker,
+                "odds_home": bm.odds_home,
+                "odds_draw": bm.odds_draw,
+                "odds_away": bm.odds_away,
+                "raw": odds_ev.raw,
+            }
+        ).execute()
         rows += 1
     return rows, quota
 
 
-def poll_polymarket(sb, http: httpx.Client, matcher: TeamMatcher,
-                    league: str,
-                    *, target_pairs: set[tuple[str, str]] | None = None
-                    ) -> tuple[int, int, int]:
+def poll_polymarket(
+    sb,
+    http: httpx.Client,
+    matcher: TeamMatcher,
+    league: str,
+    *,
+    target_pairs: set[tuple[str, str]] | None = None,
+) -> tuple[int, int, int]:
     """Fetch one league's Polymarket events + books, write snapshots.
 
     target_pairs: optional set of (home_team_id, away_team_id). When provided,
@@ -251,10 +276,20 @@ def poll_polymarket(sb, http: httpx.Client, matcher: TeamMatcher,
 
         # Resolve first so we can filter against the Odds API schedule before
         # spending /book calls on events we don't track.
-        home_id = _resolve(matcher, home_raw, source="polymarket",
-                           league=league, extra={"event_id": e.get("id"), "title": raw_title})
-        away_id = _resolve(matcher, away_raw, source="polymarket",
-                           league=league, extra={"event_id": e.get("id"), "title": raw_title})
+        home_id = _resolve(
+            matcher,
+            home_raw,
+            source="polymarket",
+            league=league,
+            extra={"event_id": e.get("id"), "title": raw_title},
+        )
+        away_id = _resolve(
+            matcher,
+            away_raw,
+            source="polymarket",
+            league=league,
+            extra={"event_id": e.get("id"), "title": raw_title},
+        )
         if target_pairs is not None:
             if home_id is None or away_id is None:
                 continue
@@ -277,39 +312,47 @@ def poll_polymarket(sb, http: httpx.Client, matcher: TeamMatcher,
             except httpx.HTTPError as exc:
                 print(f"  [pm book {mkt.outcome_side}] {exc}", flush=True)
                 continue
-            bid_depth = (book.best_bid * book.bid_size_shares
-                         if book.best_bid and book.bid_size_shares else None)
-            ask_depth = (book.best_ask * book.ask_size_shares
-                         if book.best_ask and book.ask_size_shares else None)
+            bid_depth = (
+                book.best_bid * book.bid_size_shares
+                if book.best_bid and book.bid_size_shares
+                else None
+            )
+            ask_depth = (
+                book.best_ask * book.ask_size_shares
+                if book.best_ask and book.ask_size_shares
+                else None
+            )
 
-            sb.table("polymarket_snapshots").insert({
-                "event_id":           str(e.get("id")),
-                "market_id":          mkt.condition_id,
-                "outcome_raw":        mkt.question,
-                "outcome_side":       mkt.outcome_side,
-                "home_team_id":       home_id,
-                "away_team_id":       away_id,
-                "commence_time":      commence.isoformat() if commence else None,
-                "best_bid":           book.best_bid,
-                "best_ask":           book.best_ask,
-                "best_bid_depth_usd": bid_depth,
-                "best_ask_depth_usd": ask_depth,
-                "raw":                {
-                    "event_id":        e.get("id"),
-                    "event_slug":      e.get("slug"),
-                    "market_slug":     mkt.slug,
-                    "yes_token_id":    mkt.yes_token_id,
-                    "book":            book.raw,
-                },
-            }).execute()
+            sb.table("polymarket_snapshots").insert(
+                {
+                    "event_id": str(e.get("id")),
+                    "market_id": mkt.condition_id,
+                    "outcome_raw": mkt.question,
+                    "outcome_side": mkt.outcome_side,
+                    "home_team_id": home_id,
+                    "away_team_id": away_id,
+                    "commence_time": commence.isoformat() if commence else None,
+                    "best_bid": book.best_bid,
+                    "best_ask": book.best_ask,
+                    "best_bid_depth_usd": bid_depth,
+                    "best_ask_depth_usd": ask_depth,
+                    "raw": {
+                        "event_id": e.get("id"),
+                        "event_slug": e.get("slug"),
+                        "market_slug": mkt.slug,
+                        "yes_token_id": mkt.yes_token_id,
+                        "book": book.raw,
+                    },
+                }
+            ).execute()
             rows += 1
     return rows, parsed, matched
 
 
-def _resolve(matcher: TeamMatcher, raw: str, *, source: str, league: str,
-             extra: dict) -> str | None:
-    r = matcher.resolve(raw, source=source, league_hint=league,
-                        context={"league": league, **extra})
+def _resolve(
+    matcher: TeamMatcher, raw: str, *, source: str, league: str, extra: dict
+) -> str | None:
+    r = matcher.resolve(raw, source=source, league_hint=league, context={"league": league, **extra})
     return r.team_id if r else None
 
 
@@ -321,27 +364,32 @@ def _persist_quota(sb, quota: dict[str, str]) -> None:
     """
     try:
         payload = {
-            "id":         1,
-            "remaining":  int(quota["remaining"]) if quota.get("remaining", "").isdigit() else None,
-            "used":       int(quota["used"])      if quota.get("used", "").isdigit()      else None,
-            "last_cost":  int(quota["last"])      if quota.get("last", "").isdigit()      else None,
+            "id": 1,
+            "remaining": int(quota["remaining"]) if quota.get("remaining", "").isdigit() else None,
+            "used": int(quota["used"]) if quota.get("used", "").isdigit() else None,
+            "last_cost": int(quota["last"]) if quota.get("last", "").isdigit() else None,
             "updated_at": "now()",
         }
         sb.table("odds_api_quota").upsert(payload).execute()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"  [quota persist] WARN: {exc!r}", flush=True)
 
 
-def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
-              api_key: str, leagues: list[str],
-              schedule: dict[str, list[EventSummary]]) -> None:
+def one_cycle(
+    sb,
+    http: httpx.Client,
+    matcher: TeamMatcher,
+    api_key: str,
+    leagues: list[str],
+    schedule: dict[str, list[EventSummary]],
+) -> None:
     """Per-cycle work:
-      1. Pinnacle (paid): /events/{id}/odds for every match in the T-120m
-         window.
-      2. Polymarket (free): one /events scan per league every cycle, scoped
-         to team pairs in the Odds API schedule. Runs regardless of in-window
-         status so we capture pre-window mid-curve drift — analysis joins by
-         team_id anyway.
+    1. Pinnacle (paid): /events/{id}/odds for every match in the T-120m
+       window.
+    2. Polymarket (free): one /events scan per league every cycle, scoped
+       to team pairs in the Odds API schedule. Runs regardless of in-window
+       status so we capture pre-window mid-curve drift — analysis joins by
+       team_id anyway.
     """
     started = time.monotonic()
     in_window: dict[str, list[EventSummary]] = {
@@ -350,8 +398,11 @@ def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
     }
     total_in_window = sum(len(v) for v in in_window.values())
     if total_in_window == 0:
-        print(f"  [idle] no matches in T-{TRADE_WINDOW_MIN}m window across "
-              f"{len(leagues)} leagues — skipping paid Odds API calls.", flush=True)
+        print(
+            f"  [idle] no matches in T-{TRADE_WINDOW_MIN}m window across "
+            f"{len(leagues)} leagues — skipping paid Odds API calls.",
+            flush=True,
+        )
 
     last_quota_remaining = "?"
     for lg, evs in in_window.items():
@@ -361,11 +412,13 @@ def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
                 n, quota = poll_event_odds(sb, http, matcher, api_key, ev)
                 last_quota_remaining = quota.get("remaining", "?")
                 _persist_quota(sb, quota)
-                print(f"  [odds_api {lg:<10}] {ev.home_team_raw} vs "
-                      f"{ev.away_team_raw}  T-{mins:4.0f}m  "
-                      f"wrote {n} rows  quota_remaining={last_quota_remaining}",
-                      flush=True)
-            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"  [odds_api {lg:<10}] {ev.home_team_raw} vs "
+                    f"{ev.away_team_raw}  T-{mins:4.0f}m  "
+                    f"wrote {n} rows  quota_remaining={last_quota_remaining}",
+                    flush=True,
+                )
+            except Exception as exc:
                 print(f"  [odds_api {lg}] ERROR on {ev.event_id}: {exc!r}", flush=True)
                 traceback.print_exc()
 
@@ -374,85 +427,130 @@ def one_cycle(sb, http: httpx.Client, matcher: TeamMatcher,
         sched_evs = schedule.get(lg, [])
         target_pairs: set[tuple[str, str]] = set()
         for ev in sched_evs:
-            h = _resolve(matcher, ev.home_team_raw, source="odds_api",
-                         league=lg, extra={"event_id": ev.event_id})
-            a = _resolve(matcher, ev.away_team_raw, source="odds_api",
-                         league=lg, extra={"event_id": ev.event_id})
+            h = _resolve(
+                matcher,
+                ev.home_team_raw,
+                source="odds_api",
+                league=lg,
+                extra={"event_id": ev.event_id},
+            )
+            a = _resolve(
+                matcher,
+                ev.away_team_raw,
+                source="odds_api",
+                league=lg,
+                extra={"event_id": ev.event_id},
+            )
             if h and a:
                 target_pairs.add((h, a))
 
         if not target_pairs:
-            print(f"  [polymarket {lg:<8}] no schedule pairs resolved — skipping.",
-                  flush=True)
+            print(f"  [polymarket {lg:<8}] no schedule pairs resolved — skipping.", flush=True)
             continue
 
         try:
             rows, parsed, matched = poll_polymarket(
-                sb, http, matcher, lg, target_pairs=target_pairs)
+                sb, http, matcher, lg, target_pairs=target_pairs
+            )
             flag = ""
             if parsed == 0:
                 flag = "  ⚠ no match-level events returned by Gamma"
             elif matched == 0:
                 flag = "  ⚠ parsed events but none matched schedule pairs"
-            print(f"  [polymarket {lg:<8}] parsed={parsed:3d} matched={matched:2d} "
-                  f"wrote={rows:3d} rows{flag}", flush=True)
-        except Exception as exc:  # noqa: BLE001
+            print(
+                f"  [polymarket {lg:<8}] parsed={parsed:3d} matched={matched:2d} "
+                f"wrote={rows:3d} rows{flag}",
+                flush=True,
+            )
+        except Exception as exc:
             print(f"  [polymarket {lg}] ERROR: {exc!r}", flush=True)
             traceback.print_exc()
 
     if last_quota_remaining.isdigit() and int(last_quota_remaining) < QUOTA_WARN_THRESHOLD:
         print(f"  ⚠ LOW QUOTA: {last_quota_remaining} remaining", flush=True)
     dur = time.monotonic() - started
-    print(f"cycle done in {dur:5.1f}s  "
-          f"(polled {total_in_window} Pinnacle events)", flush=True)
+    print(f"cycle done in {dur:5.1f}s  (polled {total_in_window} Pinnacle events)", flush=True)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--leagues", nargs="+", default=DEFAULT_LEAGUES,
-                        help=f"League slugs to poll. Default: {DEFAULT_LEAGUES}. "
-                             f"Valid: {list(LEAGUE_TO_SPORT_KEY)}")
-    parser.add_argument("--interval-coarse", type=int, default=POLL_INTERVAL_COARSE_SEC,
-                        help=f"Seconds between polls for matches further than "
-                             f"--fine-threshold minutes from kickoff. "
-                             f"Default: {POLL_INTERVAL_COARSE_SEC} "
-                             f"(env POLL_INTERVAL_COARSE_SEC).")
-    parser.add_argument("--interval-fine", type=int, default=POLL_INTERVAL_FINE_SEC,
-                        help=f"Seconds between polls once any match is inside "
-                             f"--fine-threshold minutes of kickoff. "
-                             f"Default: {POLL_INTERVAL_FINE_SEC} "
-                             f"(env POLL_INTERVAL_FINE_SEC).")
-    parser.add_argument("--fine-threshold", type=int, default=POLL_FINE_THRESHOLD_MIN,
-                        help=f"Minutes-to-kick boundary: at or below this, "
-                             f"cadence switches from coarse to fine. "
-                             f"Default: {POLL_FINE_THRESHOLD_MIN} "
-                             f"(env POLL_FINE_THRESHOLD_MIN).")
-    parser.add_argument("--once", action="store_true",
-                        help="Run a single cycle and exit (for smoke tests).")
-    parser.add_argument("--duration-hours", type=float, default=48.0,
-                        help="Total run time in hours. Script exits 0 when exceeded. "
-                             "Default 48 matches STRATEGY.md Phase 1 sanity-check scope. "
-                             "Set to 0 for unlimited (ops only — will burn quota).")
-    parser.add_argument("--active-hours-start", type=float, default=14.0,
-                        help="Hour (0–23.99, may be fractional) in --timezone at which "
-                             "polling resumes. Default 14.0 (14:00) — EU evening kickoffs.")
-    parser.add_argument("--active-hours-end", type=float, default=22.5,
-                        help="Hour (0–24, may be fractional) in --timezone at which "
-                             "polling pauses. Default 22.5 (22:30). "
-                             "If start==end, always active.")
-    parser.add_argument("--schedule-scan-every", type=int,
-                        default=SCHEDULE_SCAN_EVERY_SEC,
-                        help=f"Seconds between free /events refreshes. "
-                             f"Default {SCHEDULE_SCAN_EVERY_SEC}.")
-    parser.add_argument("--timezone", default="Asia/Jerusalem",
-                        help="IANA timezone for active-hours gate. Default Asia/Jerusalem.")
+    parser.add_argument(
+        "--leagues",
+        nargs="+",
+        default=DEFAULT_LEAGUES,
+        help=f"League slugs to poll. Default: {DEFAULT_LEAGUES}. "
+        f"Valid: {list(LEAGUE_TO_SPORT_KEY)}",
+    )
+    parser.add_argument(
+        "--interval-coarse",
+        type=int,
+        default=POLL_INTERVAL_COARSE_SEC,
+        help=f"Seconds between polls for matches further than "
+        f"--fine-threshold minutes from kickoff. "
+        f"Default: {POLL_INTERVAL_COARSE_SEC} "
+        f"(env POLL_INTERVAL_COARSE_SEC).",
+    )
+    parser.add_argument(
+        "--interval-fine",
+        type=int,
+        default=POLL_INTERVAL_FINE_SEC,
+        help=f"Seconds between polls once any match is inside "
+        f"--fine-threshold minutes of kickoff. "
+        f"Default: {POLL_INTERVAL_FINE_SEC} "
+        f"(env POLL_INTERVAL_FINE_SEC).",
+    )
+    parser.add_argument(
+        "--fine-threshold",
+        type=int,
+        default=POLL_FINE_THRESHOLD_MIN,
+        help=f"Minutes-to-kick boundary: at or below this, "
+        f"cadence switches from coarse to fine. "
+        f"Default: {POLL_FINE_THRESHOLD_MIN} "
+        f"(env POLL_FINE_THRESHOLD_MIN).",
+    )
+    parser.add_argument(
+        "--once", action="store_true", help="Run a single cycle and exit (for smoke tests)."
+    )
+    parser.add_argument(
+        "--duration-hours",
+        type=float,
+        default=48.0,
+        help="Total run time in hours. Script exits 0 when exceeded. "
+        "Default 48 matches STRATEGY.md Phase 1 sanity-check scope. "
+        "Set to 0 for unlimited (ops only — will burn quota).",
+    )
+    parser.add_argument(
+        "--active-hours-start",
+        type=float,
+        default=14.0,
+        help="Hour (0–23.99, may be fractional) in --timezone at which "
+        "polling resumes. Default 14.0 (14:00) — EU evening kickoffs.",
+    )
+    parser.add_argument(
+        "--active-hours-end",
+        type=float,
+        default=22.5,
+        help="Hour (0–24, may be fractional) in --timezone at which "
+        "polling pauses. Default 22.5 (22:30). "
+        "If start==end, always active.",
+    )
+    parser.add_argument(
+        "--schedule-scan-every",
+        type=int,
+        default=SCHEDULE_SCAN_EVERY_SEC,
+        help=f"Seconds between free /events refreshes. Default {SCHEDULE_SCAN_EVERY_SEC}.",
+    )
+    parser.add_argument(
+        "--timezone",
+        default="Asia/Jerusalem",
+        help="IANA timezone for active-hours gate. Default Asia/Jerusalem.",
+    )
     args = parser.parse_args()
     tz = ZoneInfo(args.timezone)
 
     for lg in args.leagues:
         if lg not in LEAGUE_TO_SPORT_KEY:
-            print(f"WARN: league {lg!r} has no Odds API sport_key — Polymarket-only.",
-                  flush=True)
+            print(f"WARN: league {lg!r} has no Odds API sport_key — Polymarket-only.", flush=True)
 
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
@@ -466,14 +564,18 @@ def main() -> int:
         mm = int(round((h - hh) * 60))
         return f"{hh:02d}:{mm:02d}"
 
-    print(f"Phase 1 logger starting. leagues={args.leagues} "
-          f"cadence=coarse:{args.interval_coarse}s/fine:{args.interval_fine}s@T-{args.fine_threshold}m "
-          f"schedule-scan-every={args.schedule_scan_every}s "
-          f"trade-window={TRADE_WINDOW_MIN}m duration={args.duration_hours}h "
-          f"active={_fmt_hm(args.active_hours_start)}–{_fmt_hm(args.active_hours_end)} "
-          f"{args.timezone} once={args.once}", flush=True)
-    run_deadline = (time.monotonic() + args.duration_hours * 3600.0
-                    if args.duration_hours > 0 else None)
+    print(
+        f"Phase 1 logger starting. leagues={args.leagues} "
+        f"cadence=coarse:{args.interval_coarse}s/fine:{args.interval_fine}s@T-{args.fine_threshold}m "
+        f"schedule-scan-every={args.schedule_scan_every}s "
+        f"trade-window={TRADE_WINDOW_MIN}m duration={args.duration_hours}h "
+        f"active={_fmt_hm(args.active_hours_start)}–{_fmt_hm(args.active_hours_end)} "
+        f"{args.timezone} once={args.once}",
+        flush=True,
+    )
+    run_deadline = (
+        time.monotonic() + args.duration_hours * 3600.0 if args.duration_hours > 0 else None
+    )
 
     # One connection pool across all cycles — avoids TCP/TLS handshake per cycle.
     # Connection limits scale with the number of concurrent book fetches we do.
@@ -491,25 +593,31 @@ def main() -> int:
 
         while not _stop:
             if run_deadline is not None and time.monotonic() >= run_deadline:
-                print(f"\nDuration budget of {args.duration_hours}h reached — exiting cleanly.",
-                      flush=True)
+                print(
+                    f"\nDuration budget of {args.duration_hours}h reached — exiting cleanly.",
+                    flush=True,
+                )
                 return 0
 
             sleep_to_next_active = _inactive_sleep_seconds(
-                tz, args.active_hours_start, args.active_hours_end)
+                tz, args.active_hours_start, args.active_hours_end
+            )
             if sleep_to_next_active > 0:
                 start_h = int(args.active_hours_start)
                 start_m = int(round((args.active_hours_start - start_h) * 60))
                 wake_local = datetime.now(tz).replace(
-                    hour=start_h, minute=start_m, second=0, microsecond=0)
+                    hour=start_h, minute=start_m, second=0, microsecond=0
+                )
                 if wake_local <= datetime.now(tz):
                     wake_local = wake_local + timedelta(days=1)
-                print(f"\n[idle] outside active window "
-                      f"{_fmt_hm(args.active_hours_start)}–"
-                      f"{_fmt_hm(args.active_hours_end)} "
-                      f"{args.timezone}. Sleeping {sleep_to_next_active/60:.0f} min "
-                      f"until {wake_local.strftime('%Y-%m-%d %H:%M %Z')}.",
-                      flush=True)
+                print(
+                    f"\n[idle] outside active window "
+                    f"{_fmt_hm(args.active_hours_start)}–"
+                    f"{_fmt_hm(args.active_hours_end)} "
+                    f"{args.timezone}. Sleeping {sleep_to_next_active / 60:.0f} min "
+                    f"until {wake_local.strftime('%Y-%m-%d %H:%M %Z')}.",
+                    flush=True,
+                )
                 deadline = time.monotonic() + sleep_to_next_active
                 while not _stop and time.monotonic() < deadline:
                     if run_deadline is not None and time.monotonic() >= run_deadline:
@@ -519,8 +627,7 @@ def main() -> int:
 
             now_mono = time.monotonic()
             if not schedule or (now_mono - last_scan_at) >= args.schedule_scan_every:
-                print(f"\n--- schedule scan @ {datetime.now(timezone.utc).isoformat()} ---",
-                      flush=True)
+                print(f"\n--- schedule scan @ {datetime.now(UTC).isoformat()} ---", flush=True)
                 schedule = poll_schedule(http, api_key, args.leagues)
                 last_scan_at = now_mono
 
@@ -531,14 +638,18 @@ def main() -> int:
                 fine_threshold_min=args.fine_threshold,
             )
             cycle_start = time.monotonic()
-            print(f"\n--- cycle @ {datetime.now(timezone.utc).isoformat()} "
-                  f"cadence={cadence_sec}s ---", flush=True)
+            print(
+                f"\n--- cycle @ {datetime.now(UTC).isoformat()} cadence={cadence_sec}s ---",
+                flush=True,
+            )
             one_cycle(sb, http, matcher, api_key, args.leagues, schedule)
             elapsed = time.monotonic() - cycle_start
             if elapsed > cadence_sec:
-                print(f"WARN: cycle took {elapsed:.1f}s > cadence {cadence_sec}s "
-                      f"— running hot, consider raising cadence or trimming leagues",
-                      flush=True)
+                print(
+                    f"WARN: cycle took {elapsed:.1f}s > cadence {cadence_sec}s "
+                    f"— running hot, consider raising cadence or trimming leagues",
+                    flush=True,
+                )
             sleep_for = max(0.0, cadence_sec - elapsed)
             if _stop:
                 break

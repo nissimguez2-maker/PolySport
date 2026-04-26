@@ -20,19 +20,19 @@ from supabase import create_client
 # Top-5 + extra European leagues whose clubs appear in UCL / Europa League
 # (needed so UEL/UCL-only names like SC Braga, Ajax, Galatasaray resolve).
 LEAGUES = {
-    "epl":        "English Premier League",
-    "seriea":     "Italian Serie A",
-    "laliga":     "Spanish La Liga",
+    "epl": "English Premier League",
+    "seriea": "Italian Serie A",
+    "laliga": "Spanish La Liga",
     "bundesliga": "German Bundesliga",
-    "ligue1":     "French Ligue 1",
-    "primeira":   "Portuguese Primeira Liga",
+    "ligue1": "French Ligue 1",
+    "primeira": "Portuguese Primeira Liga",
     "eredivisie": "Dutch Eredivisie",
-    "sueper":     "Turkish Super Lig",
-    "belgian":    "Belgian First Division A",
-    "scottish":   "Scottish Premiership",
-    "swiss":      "Swiss Super League",
-    "austrian":   "Austrian Bundesliga",
-    "greek":      "Greek Super League",
+    "sueper": "Turkish Super Lig",
+    "belgian": "Belgian First Division A",
+    "scottish": "Scottish Premiership",
+    "swiss": "Swiss Super League",
+    "austrian": "Austrian Bundesliga",
+    "greek": "Greek Super League",
 }
 
 SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
@@ -101,12 +101,14 @@ def main() -> int:
                         ).eq("id", existing.data[0]["id"]).execute()
                         total_updated += 1
                 else:
-                    supabase.table("teams").insert({
-                        "canonical_name": canonical,
-                        "country":        country,
-                        "league":         league_slug,
-                        "aliases":        aliases,
-                    }).execute()
+                    supabase.table("teams").insert(
+                        {
+                            "canonical_name": canonical,
+                            "country": country,
+                            "league": league_slug,
+                            "aliases": aliases,
+                        }
+                    ).execute()
                     total_inserted += 1
 
     print(f"\nDone. Inserted {total_inserted} new teams, updated {total_updated} existing.")

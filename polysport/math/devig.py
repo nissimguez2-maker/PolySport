@@ -28,20 +28,23 @@ class FairProbs:
     home: float
     draw: float
     away: float
-    k:    float   # the exponent that normalised the book; diagnostic only
-    vig:  float   # raw_sum - 1.0, useful for monitoring book health
+    k: float  # the exponent that normalised the book; diagnostic only
+    vig: float  # raw_sum - 1.0, useful for monitoring book health
 
 
-def devig_3way(odds_home: float, odds_draw: float, odds_away: float,
-               *, tol: float = 1e-12, max_iter: int = 100) -> FairProbs:
+def devig_3way(
+    odds_home: float, odds_draw: float, odds_away: float, *, tol: float = 1e-12, max_iter: int = 100
+) -> FairProbs:
     """De-vig a 3-way moneyline (decimal odds) via power method.
 
     Raises ValueError on malformed input (non-positive odds, odds ≤ 1.0, or
     negative vig). We fail loud rather than return garbage.
     """
     if not (odds_home > 1.0 and odds_draw > 1.0 and odds_away > 1.0):
-        raise ValueError(f"decimal odds must all be > 1.0, got "
-                         f"home={odds_home} draw={odds_draw} away={odds_away}")
+        raise ValueError(
+            f"decimal odds must all be > 1.0, got "
+            f"home={odds_home} draw={odds_draw} away={odds_away}"
+        )
 
     p_home = 1.0 / odds_home
     p_draw = 1.0 / odds_draw
@@ -52,8 +55,9 @@ def devig_3way(odds_home: float, odds_draw: float, odds_away: float,
     # silently — either the feed is corrupt or the odds are so stale we should
     # not treat them as fair. Caller decides.
     if raw_sum <= 1.0:
-        raise ValueError(f"raw implied probs sum to {raw_sum:.6f} (≤ 1.0); "
-                         f"book has no vig. Refusing to de-vig.")
+        raise ValueError(
+            f"raw implied probs sum to {raw_sum:.6f} (≤ 1.0); book has no vig. Refusing to de-vig."
+        )
 
     # Bisection over k in (0, 1]. At k=1, sum = raw_sum > 1. As k -> 0, each
     # p_i^k -> 1, so sum -> 3 > 1. Wait, that's the wrong direction. Let me
@@ -86,12 +90,11 @@ def _power_sum(p_home: float, p_draw: float, p_away: float, k: float) -> float:
     return p_home**k + p_draw**k + p_away**k
 
 
-def _make_probs(p_home: float, p_draw: float, p_away: float,
-                k: float, raw_sum: float) -> FairProbs:
+def _make_probs(p_home: float, p_draw: float, p_away: float, k: float, raw_sum: float) -> FairProbs:
     return FairProbs(
-        home = p_home**k,
-        draw = p_draw**k,
-        away = p_away**k,
-        k    = k,
-        vig  = raw_sum - 1.0,
+        home=p_home**k,
+        draw=p_draw**k,
+        away=p_away**k,
+        k=k,
+        vig=raw_sum - 1.0,
     )

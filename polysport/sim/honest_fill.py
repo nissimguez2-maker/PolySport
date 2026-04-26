@@ -51,8 +51,9 @@ Usage sketch (strategy.moneyline.simulate_shadow_trade will call this):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Literal
 
 # ─── Fee function hook ────────────────────────────────────────────────────
 # Any callable matching this signature. Phase 1 placeholder uses the
@@ -89,65 +90,70 @@ def zero_fee(_p: float, _notional_usd: float) -> float:
 
 # ─── Trade primitives ─────────────────────────────────────────────────────
 
-Side         = Literal["buy", "sell"]
-OutcomeSide  = Literal["home", "draw", "away"]
-ExitKind     = Literal["hold-to-settlement", "fok-taker-fallback",
-                       "early-exit-taker", "flip-maker-sell"]
+Side = Literal["buy", "sell"]
+OutcomeSide = Literal["home", "draw", "away"]
+ExitKind = Literal[
+    "hold-to-settlement", "fok-taker-fallback", "early-exit-taker", "flip-maker-sell"
+]
 
 
 @dataclass(frozen=True)
 class EntrySignal:
     """Match state at the moment an entry plan is evaluated."""
-    match_id:              str
-    side:                  Side
-    outcome_side:          OutcomeSide
-    polymarket_mid:        float     # (best_bid + best_ask) / 2
-    polymarket_best_ask:   float     # for FOK taker price
-    polymarket_best_bid:   float     # for FOK taker price on sells
-    pinnacle_fair:         float     # de-vigged fair
-    notional_usd:          float
-    t_minutes_to_kick:     float
+
+    match_id: str
+    side: Side
+    outcome_side: OutcomeSide
+    polymarket_mid: float  # (best_bid + best_ask) / 2
+    polymarket_best_ask: float  # for FOK taker price
+    polymarket_best_bid: float  # for FOK taker price on sells
+    pinnacle_fair: float  # de-vigged fair
+    notional_usd: float
+    t_minutes_to_kick: float
 
 
 @dataclass(frozen=True)
 class ExitPlan:
     """How the trade exits. kind drives which branch simulate_round_trip
     takes; extra fields carry branch-specific parameters."""
-    kind:                  ExitKind
+
+    kind: ExitKind
     # For fok-taker-fallback: assumed exit price at T-10m. In scaffold
     # we default to entering-side best_ask / best_bid. Phase 2 will thread
     # a realistic book-snapshot from the honest shadow feed.
-    exit_price_override:   float | None = None
+    exit_price_override: float | None = None
     # For settlement exits, the resolved outcome (0 or 1). None = not
     # resolved yet in sim — treated as unknown; scaffold uses p_win prior.
-    settlement:            int | None = None
+    settlement: int | None = None
 
 
 @dataclass
 class TradeResult:
     """Output of one simulated round trip."""
-    match_id:            str
-    side:                Side
-    outcome_side:        OutcomeSide
-    entry_price:         float
-    exit_price:          float
-    notional_usd:        float
-    shares:              float
-    gross_pnl:           float
-    fee_entry:           float
-    fee_exit:            float
-    net_pnl:             float
-    exit_kind:           ExitKind
-    diagnostics:         dict = field(default_factory=dict)
+
+    match_id: str
+    side: Side
+    outcome_side: OutcomeSide
+    entry_price: float
+    exit_price: float
+    notional_usd: float
+    shares: float
+    gross_pnl: float
+    fee_entry: float
+    fee_exit: float
+    net_pnl: float
+    exit_kind: ExitKind
+    diagnostics: dict = field(default_factory=dict)
 
 
 # ─── Simulation ───────────────────────────────────────────────────────────
 
+
 def simulate_round_trip(
     *,
-    entry:       EntrySignal,
-    exit_plan:   ExitPlan,
-    fee_fn:      FeeFn = polymarket_fee_placeholder,
+    entry: EntrySignal,
+    exit_plan: ExitPlan,
+    fee_fn: FeeFn = polymarket_fee_placeholder,
     maker_fee_fn: FeeFn = zero_fee,
 ) -> TradeResult:
     """Simulate one trade from entry to exit with honest fee accounting.
@@ -172,13 +178,21 @@ def simulate_round_trip(
     fee_entry = maker_fee_fn(entry_price, entry.notional_usd)
 
     exit_price, exit_fee, exit_kind = _compute_exit(
-        entry=entry, plan=exit_plan, shares=shares,
-        fee_fn=fee_fn, maker_fee_fn=maker_fee_fn,
+        entry=entry,
+        plan=exit_plan,
+        shares=shares,
+        fee_fn=fee_fn,
+        maker_fee_fn=maker_fee_fn,
     )
 
-    gross_pnl = _gross_pnl(entry.side, entry_price, exit_price, shares,
-                           settlement=exit_plan.settlement,
-                           prior_p_win=entry.pinnacle_fair)
+    gross_pnl = _gross_pnl(
+        entry.side,
+        entry_price,
+        exit_price,
+        shares,
+        settlement=exit_plan.settlement,
+        prior_p_win=entry.pinnacle_fair,
+    )
     net_pnl = gross_pnl - fee_entry - exit_fee
 
     return TradeResult(
@@ -195,14 +209,15 @@ def simulate_round_trip(
         net_pnl=net_pnl,
         exit_kind=exit_kind,
         diagnostics={
-            "pinnacle_fair":    entry.pinnacle_fair,
-            "polymarket_mid":   entry.polymarket_mid,
+            "pinnacle_fair": entry.pinnacle_fair,
+            "polymarket_mid": entry.polymarket_mid,
             "divergence_cents": (entry.pinnacle_fair - entry.polymarket_mid) * 100,
         },
     )
 
 
 # ─── Private helpers ──────────────────────────────────────────────────────
+
 
 def _compute_entry_price(entry: EntrySignal) -> float:
     """Maker limit 0.5c inside the mid, on the correct side."""
@@ -212,9 +227,9 @@ def _compute_entry_price(entry: EntrySignal) -> float:
     return entry.polymarket_mid + offset
 
 
-def _compute_exit(*, entry: EntrySignal, plan: ExitPlan, shares: float,
-                  fee_fn: FeeFn, maker_fee_fn: FeeFn
-                  ) -> tuple[float, float, ExitKind]:
+def _compute_exit(
+    *, entry: EntrySignal, plan: ExitPlan, shares: float, fee_fn: FeeFn, maker_fee_fn: FeeFn
+) -> tuple[float, float, ExitKind]:
     """Return (exit_price, exit_fee_usd, exit_kind). Exit semantics live
     here so simulate_round_trip stays a readable orchestrator."""
     if plan.kind == "hold-to-settlement":
@@ -229,10 +244,11 @@ def _compute_exit(*, entry: EntrySignal, plan: ExitPlan, shares: float,
         return nominal_exit, 0.0, plan.kind
 
     if plan.kind == "fok-taker-fallback":
-        exit_price = (plan.exit_price_override
-                      if plan.exit_price_override is not None
-                      else (entry.polymarket_best_bid if entry.side == "buy"
-                            else entry.polymarket_best_ask))
+        exit_price = (
+            plan.exit_price_override
+            if plan.exit_price_override is not None
+            else (entry.polymarket_best_bid if entry.side == "buy" else entry.polymarket_best_ask)
+        )
         exit_notional = exit_price * shares
         return exit_price, fee_fn(exit_price, exit_notional), plan.kind
 
@@ -243,17 +259,24 @@ def _compute_exit(*, entry: EntrySignal, plan: ExitPlan, shares: float,
         return exit_price, maker_fee_fn(exit_price, exit_notional), plan.kind
 
     # early-exit-taker: same as fok fallback today; Phase 2 may split them.
-    exit_price = (plan.exit_price_override
-                  if plan.exit_price_override is not None
-                  else (entry.polymarket_best_bid if entry.side == "buy"
-                        else entry.polymarket_best_ask))
+    exit_price = (
+        plan.exit_price_override
+        if plan.exit_price_override is not None
+        else (entry.polymarket_best_bid if entry.side == "buy" else entry.polymarket_best_ask)
+    )
     exit_notional = exit_price * shares
     return exit_price, fee_fn(exit_price, exit_notional), plan.kind
 
 
-def _gross_pnl(side: Side, entry_price: float, exit_price: float,
-               shares: float, *, settlement: int | None,
-               prior_p_win: float) -> float:
+def _gross_pnl(
+    side: Side,
+    entry_price: float,
+    exit_price: float,
+    shares: float,
+    *,
+    settlement: int | None,
+    prior_p_win: float,
+) -> float:
     """Gross PnL before fees.
 
     For settlement exits with no realized outcome, fall back to expected

@@ -27,7 +27,7 @@ import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
 
@@ -35,7 +35,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from polysport.math.devig import devig_3way  # noqa: E402
+from polysport.math.devig import devig_3way
 
 ENTRY_THRESHOLD = 0.02
 WINDOW_BEFORE_KICKOFF = timedelta(minutes=120)
@@ -94,43 +94,50 @@ def load_data(sb) -> dict[tuple, Match]:
     teams = sb.table("teams").select("id, canonical_name").execute().data
     team_name = {t["id"]: t["canonical_name"] for t in teams}
 
-    pin_rows = (sb.table("odds_api_snapshots")
-                .select("home_team_id, away_team_id, commence_time, odds_home, "
-                        "odds_draw, odds_away, polled_at, bookmaker")
-                .eq("bookmaker", "pinnacle")
-                .not_.is_("home_team_id", "null")
-                .not_.is_("away_team_id", "null")
-                .not_.is_("odds_home", "null")
-                .execute().data)
+    pin_rows = (
+        sb.table("odds_api_snapshots")
+        .select(
+            "home_team_id, away_team_id, commence_time, odds_home, "
+            "odds_draw, odds_away, polled_at, bookmaker"
+        )
+        .eq("bookmaker", "pinnacle")
+        .not_.is_("home_team_id", "null")
+        .not_.is_("away_team_id", "null")
+        .not_.is_("odds_home", "null")
+        .execute()
+        .data
+    )
 
-    pm_rows = (sb.table("polymarket_snapshots")
-               .select("home_team_id, away_team_id, outcome_side, best_bid, "
-                       "best_ask, polled_at")
-               .not_.is_("home_team_id", "null")
-               .not_.is_("away_team_id", "null")
-               .not_.is_("outcome_side", "null")
-               .execute().data)
+    pm_rows = (
+        sb.table("polymarket_snapshots")
+        .select("home_team_id, away_team_id, outcome_side, best_bid, best_ask, polled_at")
+        .not_.is_("home_team_id", "null")
+        .not_.is_("away_team_id", "null")
+        .not_.is_("outcome_side", "null")
+        .execute()
+        .data
+    )
 
     matches: dict[tuple, Match] = {}
     for r in pin_rows:
         kt = _parse_ts(r["commence_time"])
         if not kt:
             continue
-        key = (r["home_team_id"], r["away_team_id"],
-               kt.replace(second=0, microsecond=0))
+        key = (r["home_team_id"], r["away_team_id"], kt.replace(second=0, microsecond=0))
         if key not in matches:
             matches[key] = Match(
-                home_id=r["home_team_id"], away_id=r["away_team_id"],
+                home_id=r["home_team_id"],
+                away_id=r["away_team_id"],
                 kickoff=kt,
                 canonical_home=team_name.get(r["home_team_id"], r["home_team_id"]),
                 canonical_away=team_name.get(r["away_team_id"], r["away_team_id"]),
-                pinnacle_polls=[], polymarket_outcomes=defaultdict(list),
+                pinnacle_polls=[],
+                polymarket_outcomes=defaultdict(list),
             )
         matches[key].pinnacle_polls.append(r)
 
     for r in pm_rows:
-        cand = [k for k in matches
-                if k[0] == r["home_team_id"] and k[1] == r["away_team_id"]]
+        cand = [k for k in matches if k[0] == r["home_team_id"] and k[1] == r["away_team_id"]]
         if not cand:
             continue
         key = min(cand, key=lambda k: k[2])
@@ -138,12 +145,12 @@ def load_data(sb) -> dict[tuple, Match]:
 
     for m in matches.values():
         m.pinnacle_polls.sort(
-            key=lambda r: _parse_ts(r["polled_at"])
-            or datetime.max.replace(tzinfo=timezone.utc))
+            key=lambda r: _parse_ts(r["polled_at"]) or datetime.max.replace(tzinfo=UTC)
+        )
         for side in m.polymarket_outcomes:
             m.polymarket_outcomes[side].sort(
-                key=lambda r: _parse_ts(r["polled_at"])
-                or datetime.max.replace(tzinfo=timezone.utc))
+                key=lambda r: _parse_ts(r["polled_at"]) or datetime.max.replace(tzinfo=UTC)
+            )
 
     return matches
 
@@ -154,8 +161,7 @@ def _pinnacle_fair_at(m: Match, t: datetime):
     if not pin:
         return None
     try:
-        fair = devig_3way(float(pin["odds_home"]), float(pin["odds_draw"]),
-                          float(pin["odds_away"]))
+        fair = devig_3way(float(pin["odds_home"]), float(pin["odds_draw"]), float(pin["odds_away"]))
     except (ValueError, TypeError):
         return None
     return (fair.home, fair.draw, fair.away)
@@ -248,8 +254,7 @@ def main() -> int:
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-    sb = create_client(os.environ["SUPABASE_URL"],
-                       os.environ["SUPABASE_SERVICE_KEY"])
+    sb = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
     matches = load_data(sb)
     if not matches:
@@ -263,27 +268,34 @@ def main() -> int:
             all_entries.append((m, entry, forward))
 
     print("=" * 78)
-    print(f"FLIP FEASIBILITY: pre-match mean-reversion analysis")
+    print("FLIP FEASIBILITY: pre-match mean-reversion analysis")
     print("=" * 78)
     print(f"\nMatches indexed:  {len(matches)}")
-    print(f"Qualifying entries (|div0| >= {ENTRY_THRESHOLD*100:.0f}¢ in T-120→0):  "
-          f"{len(all_entries)}")
+    print(
+        f"Qualifying entries (|div0| >= {ENTRY_THRESHOLD * 100:.0f}¢ in T-120→0):  "
+        f"{len(all_entries)}"
+    )
 
     if not all_entries:
-        print("\nNo qualifying entries yet. Logger needs more matches in the "
-              "pre-match window. Re-run when the 48h log has progressed.")
+        print(
+            "\nNo qualifying entries yet. Logger needs more matches in the "
+            "pre-match window. Re-run when the 48h log has progressed."
+        )
         return 0
 
-    print("\nPer-horizon follow-through (favourable move, signed so positive = "
-          "Polymarket moved toward Pinnacle fair):\n")
-    header = f"  {'horizon':>9}  {'n':>3}  {'median':>8}  {'p25':>7}  " \
-             f"{'p75':>7}  {'P(≥1.5¢)':>9}  {'P(<0)':>7}"
+    print(
+        "\nPer-horizon follow-through (favourable move, signed so positive = "
+        "Polymarket moved toward Pinnacle fair):\n"
+    )
+    header = (
+        f"  {'horizon':>9}  {'n':>3}  {'median':>8}  {'p25':>7}  "
+        f"{'p75':>7}  {'P(≥1.5¢)':>9}  {'P(<0)':>7}"
+    )
     print(header)
     print("  " + "-" * (len(header) - 2))
 
     for horizon in HORIZONS_MIN:
-        vals = [f[horizon]["favourable_cents"]
-                for _, _, f in all_entries if f[horizon] is not None]
+        vals = [f[horizon]["favourable_cents"] for _, _, f in all_entries if f[horizon] is not None]
         if not vals:
             print(f"  {horizon:>6}min  {'—':>3}  (no samples at this horizon yet)")
             continue
@@ -292,35 +304,43 @@ def main() -> int:
         vs = sorted(vals)
         p25 = vs[len(vs) // 4]
         p75 = vs[(3 * len(vs)) // 4]
-        print(f"  {horizon:>6}min  {len(vals):>3}  "
-              f"{median(vals):>+7.2f}¢  {p25:>+6.2f}¢  {p75:>+6.2f}¢  "
-              f"{p_target*100:>7.1f}%  {p_adverse*100:>5.1f}%")
+        print(
+            f"  {horizon:>6}min  {len(vals):>3}  "
+            f"{median(vals):>+7.2f}¢  {p25:>+6.2f}¢  {p75:>+6.2f}¢  "
+            f"{p_target * 100:>7.1f}%  {p_adverse * 100:>5.1f}%"
+        )
 
-    print(f"\nReading:")
-    print(f"  median  — typical favourable move at the horizon (cents)")
-    print(f"  P(≥1.5¢) — probability of hitting the flip sell target")
-    print(f"  P(<0)   — probability Polymarket moved AGAINST us")
-    print(f"\nFlip is viable if a horizon in [15, 60] min shows P(≥1.5¢) >= 40%")
-    print(f"and P(<0) <= 35%.")
+    print("\nReading:")
+    print("  median  — typical favourable move at the horizon (cents)")
+    print("  P(≥1.5¢) — probability of hitting the flip sell target")
+    print("  P(<0)   — probability Polymarket moved AGAINST us")
+    print("\nFlip is viable if a horizon in [15, 60] min shows P(≥1.5¢) >= 40%")
+    print("and P(<0) <= 35%.")
 
     if args.verbose:
         print("\n" + "-" * 78)
         print("PER-ENTRY DETAIL")
         print("-" * 78)
         for m, entry, forward in all_entries:
-            print(f"\n  {m.canonical_home} vs {m.canonical_away} "
-                  f"({m.kickoff.strftime('%m-%d %H:%M')} UTC)")
-            print(f"    entry @ T{-entry['minutes_to_kickoff']:+.0f}min  "
-                  f"side={entry['side']:>4}  "
-                  f"div0={entry['div0']*100:+.2f}¢  "
-                  f"mid0={entry['mid0']:.3f}  fair0={entry['fair0']:.3f}")
+            print(
+                f"\n  {m.canonical_home} vs {m.canonical_away} "
+                f"({m.kickoff.strftime('%m-%d %H:%M')} UTC)"
+            )
+            print(
+                f"    entry @ T{-entry['minutes_to_kickoff']:+.0f}min  "
+                f"side={entry['side']:>4}  "
+                f"div0={entry['div0'] * 100:+.2f}¢  "
+                f"mid0={entry['mid0']:.3f}  fair0={entry['fair0']:.3f}"
+            )
             for h in HORIZONS_MIN:
                 f = forward[h]
                 if f is None:
                     print(f"    +{h:>3}min  (no sample in window)")
                 else:
-                    print(f"    +{h:>3}min  mid={f['mid_k']:.3f}  "
-                          f"favourable={f['favourable_cents']:+.2f}¢")
+                    print(
+                        f"    +{h:>3}min  mid={f['mid_k']:.3f}  "
+                        f"favourable={f['favourable_cents']:+.2f}¢"
+                    )
     return 0
 
 

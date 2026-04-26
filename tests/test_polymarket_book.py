@@ -8,8 +8,6 @@ Must pass before any live execution module touches BookTop.
 
 from __future__ import annotations
 
-import httpx
-
 from polysport.feeds.polymarket import BookTop, fetch_book
 
 
@@ -30,7 +28,7 @@ class _FakeClient:
         self._payload = payload
         self.last_params: dict | None = None
 
-    def get(self, url: str, *, params: dict, timeout: float) -> _FakeResp:  # noqa: ARG002
+    def get(self, url: str, *, params: dict, timeout: float) -> _FakeResp:
         self.last_params = params
         return _FakeResp(self._payload)
 
@@ -40,12 +38,12 @@ def test_fetch_book_picks_best_regardless_of_sort() -> None:
     payload = {
         "bids": [
             {"price": "0.47", "size": "100"},
-            {"price": "0.49", "size": "500"},   # best bid
+            {"price": "0.49", "size": "500"},  # best bid
             {"price": "0.45", "size": "200"},
         ],
         "asks": [
             {"price": "0.55", "size": "300"},
-            {"price": "0.52", "size": "400"},   # best ask
+            {"price": "0.52", "size": "400"},  # best ask
             {"price": "0.58", "size": "100"},
         ],
     }

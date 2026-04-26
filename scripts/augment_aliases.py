@@ -24,8 +24,8 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from polysport.feeds.polymarket import list_league_events  # noqa: E402
-from polysport.utils.text import normalise_name  # noqa: E402
+from polysport.feeds.polymarket import list_league_events
+from polysport.utils.text import normalise_name
 
 TARGET_LEAGUES = ["epl", "ucl", "uel", "seriea", "laliga", "bundesliga", "ligue1"]
 
@@ -53,7 +53,7 @@ def clean_title(title: str) -> str:
 def build_lookup(teams: list[dict]) -> tuple[dict, dict]:
     """Return (exact_alias_map, normalised_alias_map)."""
     exact: dict[str, tuple[str, str, str]] = {}
-    norm:  dict[str, list[tuple[str, str, str]]] = defaultdict(list)
+    norm: dict[str, list[tuple[str, str, str]]] = defaultdict(list)
     for t in teams:
         tid = t["id"]
         cname = t["canonical_name"]
@@ -119,8 +119,11 @@ def propose_aliases(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true",
-                        help="Write approved aliases to Supabase. Without this flag, prints a dry run only.")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write approved aliases to Supabase. Without this flag, prints a dry run only.",
+    )
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -137,9 +140,13 @@ def main() -> int:
     id_to_team = {t["id"]: t for t in teams}
 
     print("=" * 78)
-    print(f"AUTO-MATCH PROPOSALS  ({sum(len(v) for v in proposals.values())} new aliases across {len(proposals)} teams)")
+    print(
+        f"AUTO-MATCH PROPOSALS  ({sum(len(v) for v in proposals.values())} new aliases across {len(proposals)} teams)"
+    )
     print("=" * 78)
-    for team_id, new_aliases in sorted(proposals.items(), key=lambda x: id_to_team[x[0]]["canonical_name"]):
+    for team_id, new_aliases in sorted(
+        proposals.items(), key=lambda x: id_to_team[x[0]]["canonical_name"]
+    ):
         t = id_to_team[team_id]
         for a in sorted(new_aliases):
             print(f"  [{t['league']:<11}] {t['canonical_name']:<26}  <-  {a}")
@@ -152,7 +159,9 @@ def main() -> int:
         print(f"  [{lg_hint:<11}] {freq:3d}×  {name}")
 
     if not args.apply:
-        print("\n(dry run — no changes written. Re-run with --apply to persist proposed auto-matches.)")
+        print(
+            "\n(dry run — no changes written. Re-run with --apply to persist proposed auto-matches.)"
+        )
         return 0
 
     # Persist proposed auto-matches only. Unmatched stays for later manual action.
@@ -162,7 +171,9 @@ def main() -> int:
         current = set(id_to_team[team_id]["aliases"] or [])
         merged = sorted(current | new_aliases)
         if merged != sorted(current):
-            sb.table("teams").update({"aliases": merged, "updated_at": "now()"}).eq("id", team_id).execute()
+            sb.table("teams").update({"aliases": merged, "updated_at": "now()"}).eq(
+                "id", team_id
+            ).execute()
             updated += 1
     print(f"Updated {updated} team rows with new aliases.")
     return 0

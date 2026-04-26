@@ -26,7 +26,7 @@ import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
 
@@ -34,12 +34,12 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from polysport.math.devig import devig_3way  # noqa: E402
+from polysport.math.devig import devig_3way
 
-STALENESS_SEC = 60                # STRATEGY: skip decision if Pinnacle snapshot > 60s old
-DIVERGENCE_THRESHOLD = 0.02       # STRATEGY: |div| ≥ 2¢
+STALENESS_SEC = 60  # STRATEGY: skip decision if Pinnacle snapshot > 60s old
+DIVERGENCE_THRESHOLD = 0.02  # STRATEGY: |div| ≥ 2¢
 WINDOW_BEFORE_KICKOFF = timedelta(minutes=120)  # T-120 → T-0
-PHASE1_TARGET_PCT = 30.0          # STRATEGY: ≥30% of matches must touch
+PHASE1_TARGET_PCT = 30.0  # STRATEGY: ≥30% of matches must touch
 
 
 @dataclass
@@ -49,7 +49,7 @@ class Match:
     kickoff: datetime
     canonical_home: str
     canonical_away: str
-    pinnacle_polls: list[dict]      # raw rows, sorted by polled_at
+    pinnacle_polls: list[dict]  # raw rows, sorted by polled_at
     polymarket_outcomes: dict[str, list[dict]]  # outcome_side -> sorted rows
 
 
@@ -72,22 +72,31 @@ def load_data(sb) -> tuple[dict[tuple, Match], dict[str, str]]:
     teams = sb.table("teams").select("id, canonical_name").execute().data
     team_name: dict[str, str] = {t["id"]: t["canonical_name"] for t in teams}
 
-    pin_rows = (sb.table("odds_api_snapshots")
-                .select("home_team_id, away_team_id, commence_time, odds_home, odds_draw, "
-                        "odds_away, polled_at, bookmaker")
-                .eq("bookmaker", "pinnacle")
-                .not_.is_("home_team_id", "null")
-                .not_.is_("away_team_id", "null")
-                .not_.is_("odds_home", "null")
-                .execute().data)
+    pin_rows = (
+        sb.table("odds_api_snapshots")
+        .select(
+            "home_team_id, away_team_id, commence_time, odds_home, odds_draw, "
+            "odds_away, polled_at, bookmaker"
+        )
+        .eq("bookmaker", "pinnacle")
+        .not_.is_("home_team_id", "null")
+        .not_.is_("away_team_id", "null")
+        .not_.is_("odds_home", "null")
+        .execute()
+        .data
+    )
 
-    pm_rows = (sb.table("polymarket_snapshots")
-               .select("home_team_id, away_team_id, outcome_side, best_bid, best_ask, "
-                       "polled_at, commence_time")
-               .not_.is_("home_team_id", "null")
-               .not_.is_("away_team_id", "null")
-               .not_.is_("outcome_side", "null")
-               .execute().data)
+    pm_rows = (
+        sb.table("polymarket_snapshots")
+        .select(
+            "home_team_id, away_team_id, outcome_side, best_bid, best_ask, polled_at, commence_time"
+        )
+        .not_.is_("home_team_id", "null")
+        .not_.is_("away_team_id", "null")
+        .not_.is_("outcome_side", "null")
+        .execute()
+        .data
+    )
 
     # Build match index from Pinnacle (it has trustworthy kickoff).
     matches: dict[tuple, Match] = {}
@@ -98,10 +107,13 @@ def load_data(sb) -> tuple[dict[tuple, Match], dict[str, str]]:
         key = (r["home_team_id"], r["away_team_id"], kt.replace(second=0, microsecond=0))
         if key not in matches:
             matches[key] = Match(
-                home_id=r["home_team_id"], away_id=r["away_team_id"], kickoff=kt,
+                home_id=r["home_team_id"],
+                away_id=r["away_team_id"],
+                kickoff=kt,
                 canonical_home=team_name.get(r["home_team_id"], r["home_team_id"]),
                 canonical_away=team_name.get(r["away_team_id"], r["away_team_id"]),
-                pinnacle_polls=[], polymarket_outcomes=defaultdict(list),
+                pinnacle_polls=[],
+                polymarket_outcomes=defaultdict(list),
             )
         matches[key].pinnacle_polls.append(r)
 
@@ -120,9 +132,13 @@ def load_data(sb) -> tuple[dict[tuple, Match], dict[str, str]]:
 
     # Sort all rows by polled_at for efficient nearest-neighbour lookups.
     for m in matches.values():
-        m.pinnacle_polls.sort(key=lambda r: _parse_ts(r["polled_at"]) or datetime.max.replace(tzinfo=timezone.utc))
+        m.pinnacle_polls.sort(
+            key=lambda r: _parse_ts(r["polled_at"]) or datetime.max.replace(tzinfo=UTC)
+        )
         for side in m.polymarket_outcomes:
-            m.polymarket_outcomes[side].sort(key=lambda r: _parse_ts(r["polled_at"]) or datetime.max.replace(tzinfo=timezone.utc))
+            m.polymarket_outcomes[side].sort(
+                key=lambda r: _parse_ts(r["polled_at"]) or datetime.max.replace(tzinfo=UTC)
+            )
 
     return matches, team_name
 
@@ -192,8 +208,9 @@ def analyse_match(m: Match) -> dict:
             continue
 
         try:
-            fair = devig_3way(float(pin["odds_home"]), float(pin["odds_draw"]),
-                              float(pin["odds_away"]))
+            fair = devig_3way(
+                float(pin["odds_home"]), float(pin["odds_draw"]), float(pin["odds_away"])
+            )
         except (ValueError, TypeError):
             skipped_bad_book += 1
             continue
@@ -202,25 +219,27 @@ def analyse_match(m: Match) -> dict:
         div_d = fair.draw - mid_d
         div_a = fair.away - mid_a
         max_abs = max(abs(div_h), abs(div_d), abs(div_a))
-        divergences.append({
-            "polled_at":      pm_time,
-            "minutes_to_kickoff": (m.kickoff - pm_time).total_seconds() / 60.0,
-            "fair":           (fair.home, fair.draw, fair.away),
-            "mid":            (mid_h, mid_d, mid_a),
-            "div":            (div_h, div_d, div_a),
-            "max_abs_div":    max_abs,
-        })
+        divergences.append(
+            {
+                "polled_at": pm_time,
+                "minutes_to_kickoff": (m.kickoff - pm_time).total_seconds() / 60.0,
+                "fair": (fair.home, fair.draw, fair.away),
+                "mid": (mid_h, mid_d, mid_a),
+                "div": (div_h, div_d, div_a),
+                "max_abs_div": max_abs,
+            }
+        )
 
     return {
-        "match":      m,
-        "points":     divergences,
-        "touches":    any(d["max_abs_div"] >= DIVERGENCE_THRESHOLD for d in divergences),
-        "n_points":   len(divergences),
+        "match": m,
+        "points": divergences,
+        "touches": any(d["max_abs_div"] >= DIVERGENCE_THRESHOLD for d in divergences),
+        "n_points": len(divergences),
         "skipped": {
-            "incomplete":     skipped_incomplete,
+            "incomplete": skipped_incomplete,
             "stale_pinnacle": skipped_stale,
-            "bad_book":       skipped_bad_book,
-            "out_of_window":  skipped_out_of_window,
+            "bad_book": skipped_bad_book,
+            "out_of_window": skipped_out_of_window,
         },
     }
 
@@ -235,8 +254,12 @@ def _mid(row: dict) -> float | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Print the max-divergence point for every match.")
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Print the max-divergence point for every match.",
+    )
     args = parser.parse_args()
 
     load_dotenv(Path(__file__).resolve().parent.parent / ".env")
@@ -257,30 +280,29 @@ def main() -> int:
     touching = [r for r in graded if r["touches"]]
     not_graded = [r for r in results if r["n_points"] == 0]
 
-    if graded:
-        pct = len(touching) / len(graded) * 100
-    else:
-        pct = 0.0
+    pct = len(touching) / len(graded) * 100 if graded else 0.0
     verdict = "PASS ✓" if pct >= PHASE1_TARGET_PCT else "not yet"
 
     print(f"\nMatches with any qualifying poll in T-120→T-0 window: {len(graded)} / {len(matches)}")
-    print(f"Matches that touched |div| ≥ {DIVERGENCE_THRESHOLD*100:.0f}¢:           "
-          f"{len(touching)} / {len(graded)}  ({pct:.1f}%)")
+    print(
+        f"Matches that touched |div| ≥ {DIVERGENCE_THRESHOLD * 100:.0f}¢:           "
+        f"{len(touching)} / {len(graded)}  ({pct:.1f}%)"
+    )
     print(f"Phase 1 target: ≥ {PHASE1_TARGET_PCT:.0f}%  →  {verdict}")
 
     if graded:
-        maxes = [r["points"][0]["max_abs_div"] for r in graded
-                 for _ in [None] if r["points"]]  # at least one point
         # Grab each match's single largest |div|, not all points, for distribution.
         per_match_max = [max(p["max_abs_div"] for p in r["points"]) for r in graded]
-        print(f"\nPer-match max |div| distribution (¢):")
-        print(f"  median   {median(per_match_max)*100:6.2f}¢")
-        print(f"  max      {max(per_match_max)*100:6.2f}¢")
-        print(f"  min      {min(per_match_max)*100:6.2f}¢")
+        print("\nPer-match max |div| distribution (¢):")
+        print(f"  median   {median(per_match_max) * 100:6.2f}¢")
+        print(f"  max      {max(per_match_max) * 100:6.2f}¢")
+        print(f"  min      {min(per_match_max) * 100:6.2f}¢")
 
     if not_graded:
-        print(f"\n{len(not_graded)} matches have no qualifying poll yet "
-              f"(outside T-120→0 window, incomplete book, or Pinnacle > {STALENESS_SEC}s stale).")
+        print(
+            f"\n{len(not_graded)} matches have no qualifying poll yet "
+            f"(outside T-120→0 window, incomplete book, or Pinnacle > {STALENESS_SEC}s stale)."
+        )
 
     print("\n" + "-" * 78)
     print("PER-MATCH DETAIL")
@@ -288,18 +310,22 @@ def main() -> int:
     for r in sorted(results, key=lambda r: r["match"].kickoff):
         m: Match = r["match"]
         hit = "★" if r["touches"] else " "
-        max_div = (max(p["max_abs_div"] for p in r["points"]) if r["points"] else 0.0)
-        mins_to_kick = (m.kickoff - datetime.now(timezone.utc)).total_seconds() / 60.0
+        max_div = max(p["max_abs_div"] for p in r["points"]) if r["points"] else 0.0
+        mins_to_kick = (m.kickoff - datetime.now(UTC)).total_seconds() / 60.0
         when = m.kickoff.strftime("%Y-%m-%d %H:%M UTC")
-        print(f"  {hit} {when}  {m.canonical_home:<24} vs {m.canonical_away:<24} "
-              f" pts={r['n_points']:3d}  max|div|={max_div*100:5.2f}¢  "
-              f"(T{mins_to_kick:+.0f}min)")
+        print(
+            f"  {hit} {when}  {m.canonical_home:<24} vs {m.canonical_away:<24} "
+            f" pts={r['n_points']:3d}  max|div|={max_div * 100:5.2f}¢  "
+            f"(T{mins_to_kick:+.0f}min)"
+        )
         if args.verbose and r["points"]:
             p = max(r["points"], key=lambda x: x["max_abs_div"])
-            print(f"      at T{p['minutes_to_kickoff']:+.1f}min: "
-                  f"fair={tuple(round(x,3) for x in p['fair'])}  "
-                  f"mid={tuple(round(x,3) for x in p['mid'])}  "
-                  f"div={tuple(round(x*100,2) for x in p['div'])}¢")
+            print(
+                f"      at T{p['minutes_to_kickoff']:+.1f}min: "
+                f"fair={tuple(round(x, 3) for x in p['fair'])}  "
+                f"mid={tuple(round(x, 3) for x in p['mid'])}  "
+                f"div={tuple(round(x * 100, 2) for x in p['div'])}¢"
+            )
 
     return 0
 

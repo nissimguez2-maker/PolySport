@@ -29,13 +29,14 @@ from polysport.utils.text import normalise_name
 
 @dataclass(frozen=True)
 class Resolved:
-    team_id:         str   # UUID as string
-    canonical_name:  str
-    league:          str
+    team_id: str  # UUID as string
+    canonical_name: str
+    league: str
 
 
 class SupabaseLike(Protocol):
     """Narrow interface so we can unit-test without hitting Supabase."""
+
     def table(self, name: str) -> Any: ...
 
 
@@ -45,19 +46,15 @@ class TeamMatcher:
     def __init__(self, sb: SupabaseLike):
         self._sb = sb
         self._exact: dict[str, Resolved] = {}
-        self._norm:  dict[str, list[Resolved]] = {}
+        self._norm: dict[str, list[Resolved]] = {}
         self._reload()
 
     def _reload(self) -> None:
-        teams = (self._sb.table("teams")
-                 .select("id, canonical_name, league, aliases")
-                 .execute().data)
+        teams = self._sb.table("teams").select("id, canonical_name, league, aliases").execute().data
         exact: dict[str, Resolved] = {}
-        norm:  dict[str, list[Resolved]] = {}
+        norm: dict[str, list[Resolved]] = {}
         for t in teams:
-            r = Resolved(team_id=t["id"],
-                         canonical_name=t["canonical_name"],
-                         league=t["league"])
+            r = Resolved(team_id=t["id"], canonical_name=t["canonical_name"], league=t["league"])
             for name in [t["canonical_name"]] + (t["aliases"] or []):
                 exact[name.strip().lower()] = r
                 n = normalise_name(name)
@@ -65,9 +62,14 @@ class TeamMatcher:
                     norm.setdefault(n, []).append(r)
         self._exact, self._norm = exact, norm
 
-    def resolve(self, raw_name: str, *, source: str,
-                league_hint: str | None = None,
-                context: dict[str, Any] | None = None) -> Resolved | None:
+    def resolve(
+        self,
+        raw_name: str,
+        *,
+        source: str,
+        league_hint: str | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> Resolved | None:
         """Return a Resolved or None. On miss, upsert into unresolved_entities."""
         if not raw_name or not raw_name.strip():
             return None
@@ -90,28 +92,35 @@ class TeamMatcher:
         self._log_unresolved(raw_name, source=source, context=context)
         return None
 
-    def _log_unresolved(self, raw_name: str, *, source: str,
-                        context: dict[str, Any] | None) -> None:
+    def _log_unresolved(
+        self, raw_name: str, *, source: str, context: dict[str, Any] | None
+    ) -> None:
         """Upsert into unresolved_entities, bumping seen_count and last_seen."""
         # Try to update an existing row first; insert if none. The unique constraint
         # is (source, raw_name), so this is atomic enough for our cadence.
-        existing = (self._sb.table("unresolved_entities")
-                    .select("id, seen_count")
-                    .eq("source", source)
-                    .eq("raw_name", raw_name)
-                    .is_("resolved_at", "null")
-                    .execute()).data
+        existing = (
+            self._sb.table("unresolved_entities")
+            .select("id, seen_count")
+            .eq("source", source)
+            .eq("raw_name", raw_name)
+            .is_("resolved_at", "null")
+            .execute()
+        ).data
         if existing:
             row = existing[0]
-            self._sb.table("unresolved_entities").update({
-                "seen_count": (row["seen_count"] or 0) + 1,
-                "last_seen":  "now()",
-                "context":    context,
-            }).eq("id", row["id"]).execute()
+            self._sb.table("unresolved_entities").update(
+                {
+                    "seen_count": (row["seen_count"] or 0) + 1,
+                    "last_seen": "now()",
+                    "context": context,
+                }
+            ).eq("id", row["id"]).execute()
         else:
-            self._sb.table("unresolved_entities").insert({
-                "source":     source,
-                "raw_name":   raw_name,
-                "context":    context,
-                "seen_count": 1,
-            }).execute()
+            self._sb.table("unresolved_entities").insert(
+                {
+                    "source": source,
+                    "raw_name": raw_name,
+                    "context": context,
+                    "seen_count": 1,
+                }
+            ).execute()

@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 import pytest
-
 from polysport.math.devig import FairProbs, devig_3way
 
 
@@ -22,7 +21,7 @@ def test_fair_book_raises() -> None:
 
 
 def test_rejects_sub_unity_odds() -> None:
-    with pytest.raises(ValueError, match="must all be > 1.0"):
+    with pytest.raises(ValueError, match=r"must all be > 1\.0"):
         devig_3way(0.9, 3.0, 3.0)
 
 
@@ -45,7 +44,7 @@ def test_tight_line() -> None:
     _assert_sums_to_one(f)
     # All fair probs within ~1.5pp of raw 1/odds because the line is balanced.
     raw = [1 / 2.90, 1 / 2.95, 1 / 3.00]
-    for r, fair in zip(raw, (f.home, f.draw, f.away)):
+    for r, fair in zip(raw, (f.home, f.draw, f.away), strict=True):
         assert abs(fair - r) < 0.02
 
 
@@ -59,8 +58,9 @@ def test_heavy_favourite_longshot_bias() -> None:
     # Relative trim on fav is smaller than relative trim on longshot.
     trim_home = (p_home_raw - f.home) / p_home_raw
     trim_away = (p_away_raw - f.away) / p_away_raw
-    assert trim_away > trim_home, \
+    assert trim_away > trim_home, (
         f"expected longshot trimmed more than fav (got {trim_away:.4f} vs {trim_home:.4f})"
+    )
 
 
 def test_high_vig_book_still_converges() -> None:

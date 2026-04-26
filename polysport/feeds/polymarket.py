@@ -17,7 +17,7 @@ from typing import Any, Literal
 import httpx
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
-CLOB_BASE  = "https://clob.polymarket.com"
+CLOB_BASE = "https://clob.polymarket.com"
 
 OutcomeSide = Literal["home", "draw", "away"]
 
@@ -27,14 +27,14 @@ _QUESTION_WIN_PATTERN = re.compile(r"^Will\s+(.+?)\s+win\s+on\s+", flags=re.IGNO
 # Polymarket is inconsistent (e.g., "champions-league" + "uefa-champions-league" +
 # "ucl"), so we union across all known aliases to avoid missing events.
 LEAGUE_TAG_ALIASES: dict[str, list[str]] = {
-    "epl":          ["EPL", "premier-league"],
-    "ucl":          ["champions-league", "uefa-champions-league", "ucl"],
-    "uel":          ["uel", "europa-league", "uefa-europa-league"],
-    "seriea":       ["serie-a"],
-    "laliga":       ["la-liga"],
-    "bundesliga":   ["bundesliga"],
-    "ligue1":       ["ligue-1"],
-    "worldcup":     ["fifa-world-cup", "world-cup"],
+    "epl": ["EPL", "premier-league"],
+    "ucl": ["champions-league", "uefa-champions-league", "ucl"],
+    "uel": ["uel", "europa-league", "uefa-europa-league"],
+    "seriea": ["serie-a"],
+    "laliga": ["la-liga"],
+    "bundesliga": ["bundesliga"],
+    "ligue1": ["ligue-1"],
+    "worldcup": ["fifa-world-cup", "world-cup"],
 }
 
 
@@ -50,10 +50,10 @@ def list_events_by_tag(
     resp = client.get(
         f"{GAMMA_BASE}/events",
         params={
-            "tag_slug":    tag_slug,
-            "closed":      "true" if closed else "false",
-            "active":      "true" if active else "false",
-            "limit":       limit,
+            "tag_slug": tag_slug,
+            "closed": "true" if closed else "false",
+            "active": "true" if active else "false",
+            "limit": limit,
         },
         timeout=30.0,
     )
@@ -81,12 +81,13 @@ def list_league_events(client: httpx.Client, league_slug: str) -> list[dict]:
 @dataclass(frozen=True)
 class MoneylineMarket:
     """One side of a 3-way moneyline: a Yes/No market priced on Polymarket CLOB."""
-    outcome_side: OutcomeSide     # 'home' | 'draw' | 'away'
+
+    outcome_side: OutcomeSide  # 'home' | 'draw' | 'away'
     condition_id: str
-    yes_token_id: str             # token we price (cost to bet Yes on this outcome)
-    no_token_id:  str
-    slug:         str
-    question:     str
+    yes_token_id: str  # token we price (cost to bet Yes on this outcome)
+    no_token_id: str
+    slug: str
+    question: str
 
 
 def extract_moneyline_markets(event: dict, home_raw: str, away_raw: str) -> list[MoneylineMarket]:
@@ -135,12 +136,12 @@ def extract_moneyline_markets(event: dict, home_raw: str, away_raw: str) -> list
             continue
 
         collected[side] = MoneylineMarket(
-            outcome_side = side,
-            condition_id = m.get("conditionId") or "",
-            yes_token_id = tokens[0],
-            no_token_id  = tokens[1],
-            slug         = m.get("slug") or "",
-            question     = q,
+            outcome_side=side,
+            condition_id=m.get("conditionId") or "",
+            yes_token_id=tokens[0],
+            no_token_id=tokens[1],
+            slug=m.get("slug") or "",
+            question=q,
         )
 
     # Require all 3 sides; otherwise return [] so caller treats this event as unusable.
@@ -152,19 +153,18 @@ def extract_moneyline_markets(event: dict, home_raw: str, away_raw: str) -> list
 @dataclass(frozen=True)
 class BookTop:
     """Best bid/ask plus size at the top of book for a single CLOB token."""
-    token_id:        str
-    best_bid:        float | None
-    best_ask:        float | None
-    bid_size_shares: float | None   # shares on Polymarket == USD at $1 notional
+
+    token_id: str
+    best_bid: float | None
+    best_ask: float | None
+    bid_size_shares: float | None  # shares on Polymarket == USD at $1 notional
     ask_size_shares: float | None
-    raw:             dict[str, Any]
+    raw: dict[str, Any]
 
 
 def fetch_book(client: httpx.Client, token_id: str) -> BookTop:
     """GET /book for one token and return top-of-book. Never raises on empty book."""
-    resp = client.get(f"{CLOB_BASE}/book",
-                      params={"token_id": token_id},
-                      timeout=15.0)
+    resp = client.get(f"{CLOB_BASE}/book", params={"token_id": token_id}, timeout=15.0)
     resp.raise_for_status()
     payload = resp.json()
 
@@ -178,12 +178,12 @@ def fetch_book(client: httpx.Client, token_id: str) -> BookTop:
     ask_size = _size(min(asks, key=lambda a: float(a["price"]))) if asks else None
 
     return BookTop(
-        token_id        = token_id,
-        best_bid        = best_bid,
-        best_ask        = best_ask,
-        bid_size_shares = bid_size,
-        ask_size_shares = ask_size,
-        raw             = payload,
+        token_id=token_id,
+        best_bid=best_bid,
+        best_ask=best_ask,
+        bid_size_shares=bid_size,
+        ask_size_shares=ask_size,
+        raw=payload,
     )
 
 

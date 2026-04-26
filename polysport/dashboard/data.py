@@ -7,7 +7,7 @@ Window: last 10 minutes of polls, capped at 72h of upcoming matches.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from polysport.math.devig import devig_3way
@@ -45,12 +45,12 @@ class MatchRow:
     away: str
     league: str
     outcomes: dict[str, Outcome] = field(default_factory=dict)
-    best_side: str | None = None       # outcome with max positive div
-    best_div_cents: float = 0.0        # signed; positive = underpriced on PM
+    best_side: str | None = None  # outcome with max positive div
+    best_div_cents: float = 0.0  # signed; positive = underpriced on PM
     max_abs_div_cents: float = 0.0
-    action_kind: str = "skip"          # "buy" | "sell" | "skip"
-    action_side: str | None = None     # "home" | "draw" | "away"
-    action_reason: str = ""            # "no edge" | "spread" | "depth" | "heavy fav" | "fire"
+    action_kind: str = "skip"  # "buy" | "sell" | "skip"
+    action_side: str | None = None  # "home" | "draw" | "away"
+    action_reason: str = ""  # "no edge" | "spread" | "depth" | "heavy fav" | "fire"
     pin_age_sec: float | None = None
 
 
@@ -78,16 +78,15 @@ def _fmt_t(minutes_to_kick: float) -> str:
 
 def _decide_action(m: MatchRow) -> tuple[str, str | None, str]:
     """Return (kind, side, reason) given match state + STRATEGY.md gates."""
-    positive_sides = [(s, o) for s, o in m.outcomes.items()
-                      if o.div is not None and o.div > 0]
+    positive_sides = [(s, o) for s, o in m.outcomes.items() if o.div is not None and o.div > 0]
     if not positive_sides:
         return "skip", None, "no underpriced outcome"
 
     side, outcome = max(positive_sides, key=lambda kv: kv[1].div)
     if outcome.div < ENTRY_DIV_THRESHOLD:
-        return "skip", side, f"gap {outcome.div*100:.2f}¢ < 2¢"
+        return "skip", side, f"gap {outcome.div * 100:.2f}¢ < 2¢"
     if outcome.spread is None or outcome.spread > MAX_SPREAD:
-        return "skip", side, f"spread {(outcome.spread or 0)*100:.1f}¢ > 3¢"
+        return "skip", side, f"spread {(outcome.spread or 0) * 100:.1f}¢ > 3¢"
     if outcome.depth_min_usd is None or outcome.depth_min_usd < MIN_DEPTH_USD:
         depth = outcome.depth_min_usd or 0
         return "skip", side, f"depth ${depth:.0f} < $500"
@@ -97,7 +96,7 @@ def _decide_action(m: MatchRow) -> tuple[str, str | None, str]:
 
 
 def get_live_state(sb) -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     window_start = now - RECENT_WINDOW
     horizon_future = now + UPCOMING_HORIZON
     horizon_past = now - PAST_HORIZON
@@ -105,45 +104,61 @@ def get_live_state(sb) -> dict:
     teams = sb.table("teams").select("id, canonical_name").execute().data
     team_name = {t["id"]: t["canonical_name"] for t in teams}
 
-    pin_rows = (sb.table("odds_api_snapshots")
-                .select("home_team_id, away_team_id, commence_time, odds_home, "
-                        "odds_draw, odds_away, polled_at, league_key")
-                .eq("bookmaker", "pinnacle")
-                .gte("polled_at", window_start.isoformat())
-                .gte("commence_time", horizon_past.isoformat())
-                .lte("commence_time", horizon_future.isoformat())
-                .not_.is_("home_team_id", "null")
-                .not_.is_("away_team_id", "null")
-                .not_.is_("odds_home", "null")
-                .order("polled_at", desc=True)
-                .execute().data)
+    pin_rows = (
+        sb.table("odds_api_snapshots")
+        .select(
+            "home_team_id, away_team_id, commence_time, odds_home, "
+            "odds_draw, odds_away, polled_at, league_key"
+        )
+        .eq("bookmaker", "pinnacle")
+        .gte("polled_at", window_start.isoformat())
+        .gte("commence_time", horizon_past.isoformat())
+        .lte("commence_time", horizon_future.isoformat())
+        .not_.is_("home_team_id", "null")
+        .not_.is_("away_team_id", "null")
+        .not_.is_("odds_home", "null")
+        .order("polled_at", desc=True)
+        .execute()
+        .data
+    )
 
-    pm_rows = (sb.table("polymarket_snapshots")
-               .select("home_team_id, away_team_id, outcome_side, best_bid, "
-                       "best_ask, best_bid_depth_usd, best_ask_depth_usd, "
-                       "polled_at")
-               .gte("polled_at", window_start.isoformat())
-               .not_.is_("home_team_id", "null")
-               .not_.is_("outcome_side", "null")
-               .order("polled_at", desc=True)
-               .execute().data)
+    pm_rows = (
+        sb.table("polymarket_snapshots")
+        .select(
+            "home_team_id, away_team_id, outcome_side, best_bid, "
+            "best_ask, best_bid_depth_usd, best_ask_depth_usd, "
+            "polled_at"
+        )
+        .gte("polled_at", window_start.isoformat())
+        .not_.is_("home_team_id", "null")
+        .not_.is_("outcome_side", "null")
+        .order("polled_at", desc=True)
+        .execute()
+        .data
+    )
 
-    unresolved_count = (sb.table("unresolved_entities")
-                        .select("id", count="exact")
-                        .is_("resolved_at", "null")
-                        .execute()).count or 0
+    unresolved_count = (
+        sb.table("unresolved_entities")
+        .select("id", count="exact")
+        .is_("resolved_at", "null")
+        .execute()
+    ).count or 0
 
     # Best-effort quota read. The migration may not have been applied yet on
     # a fresh deploy; the dashboard must still render. Same defensive pattern
     # as the logger's _persist_quota.
     quota: dict | None = None
     try:
-        qrows = (sb.table("odds_api_quota")
-                 .select("remaining, used, last_cost, updated_at")
-                 .eq("id", 1).limit(1).execute()).data
+        qrows = (
+            sb.table("odds_api_quota")
+            .select("remaining, used, last_cost, updated_at")
+            .eq("id", 1)
+            .limit(1)
+            .execute()
+        ).data
         if qrows:
             quota = qrows[0]
-    except Exception:  # noqa: BLE001
+    except Exception:
         quota = None
 
     # Pinnacle's commence_time jitters minute-to-minute for a match that's
@@ -179,9 +194,9 @@ def get_live_state(sb) -> dict:
             continue
 
         try:
-            fair = devig_3way(float(pin["odds_home"]),
-                              float(pin["odds_draw"]),
-                              float(pin["odds_away"]))
+            fair = devig_3way(
+                float(pin["odds_home"]), float(pin["odds_draw"]), float(pin["odds_away"])
+            )
         except (ValueError, TypeError):
             continue
 
@@ -191,15 +206,29 @@ def get_live_state(sb) -> dict:
             pm = pm_by_outcome.get((home_id, away_id, side))
             f = fair_by_side[side]
             if not pm:
-                outcomes[side] = Outcome(fair=f, mid=None, bid=None, ask=None,
-                                         spread=None, depth_min_usd=None,
-                                         div=None, pm_age_sec=None)
+                outcomes[side] = Outcome(
+                    fair=f,
+                    mid=None,
+                    bid=None,
+                    ask=None,
+                    spread=None,
+                    depth_min_usd=None,
+                    div=None,
+                    pm_age_sec=None,
+                )
                 continue
             bid, ask = pm.get("best_bid"), pm.get("best_ask")
             if bid is None or ask is None:
-                outcomes[side] = Outcome(fair=f, mid=None, bid=None, ask=None,
-                                         spread=None, depth_min_usd=None,
-                                         div=None, pm_age_sec=None)
+                outcomes[side] = Outcome(
+                    fair=f,
+                    mid=None,
+                    bid=None,
+                    ask=None,
+                    spread=None,
+                    depth_min_usd=None,
+                    div=None,
+                    pm_age_sec=None,
+                )
                 continue
             bid_f, ask_f = float(bid), float(ask)
             mid = (bid_f + ask_f) / 2.0
@@ -211,8 +240,13 @@ def get_live_state(sb) -> dict:
                 depth_min = min(float(d_bid), float(d_ask))
             pt = _parse_ts(pm["polled_at"])
             outcomes[side] = Outcome(
-                fair=f, mid=mid, bid=bid_f, ask=ask_f, spread=spread,
-                depth_min_usd=depth_min, div=(f - mid),
+                fair=f,
+                mid=mid,
+                bid=bid_f,
+                ask=ask_f,
+                spread=spread,
+                depth_min_usd=depth_min,
+                div=(f - mid),
                 pm_age_sec=(now - pt).total_seconds() if pt else None,
             )
 
@@ -239,10 +273,12 @@ def get_live_state(sb) -> dict:
         row.action_kind, row.action_side, row.action_reason = kind, side, reason
         match_rows.append(row)
 
-    match_rows.sort(key=lambda m: (
-        0 if m.in_window else (1 if m.minutes_to_kick > 120 else 2),
-        m.minutes_to_kick if m.minutes_to_kick >= 0 else -m.minutes_to_kick + 1e6,
-    ))
+    match_rows.sort(
+        key=lambda m: (
+            0 if m.in_window else (1 if m.minutes_to_kick > 120 else 2),
+            m.minutes_to_kick if m.minutes_to_kick >= 0 else -m.minutes_to_kick + 1e6,
+        )
+    )
 
     last_poll = None
     if pin_rows:
@@ -269,10 +305,9 @@ def get_live_state(sb) -> dict:
     n_expected = len(pin_by_match)
     n_matched = 0
     n_incomplete = 0
-    for (home_id, away_id) in pin_by_match:
+    for home_id, away_id in pin_by_match:
         sides_present = sum(
-            1 for side in ("home", "draw", "away")
-            if (home_id, away_id, side) in pm_by_outcome
+            1 for side in ("home", "draw", "away") if (home_id, away_id, side) in pm_by_outcome
         )
         if sides_present >= 1:
             n_matched += 1

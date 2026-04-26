@@ -12,32 +12,32 @@ import unicodedata
 # City / locality / honorific translations observed in Polymarket naming.
 # Expand only when a concrete mismatch is observed — never speculatively.
 CITY_MAP: dict[str, str] = {
-    "münchen":        "munich",
-    "köln":           "cologne",
-    "nürnberg":       "nuremberg",
-    "hamburger":      "hamburg",          # "Hamburger SV" -> Hamburg
-    "lyonnais":       "lyon",
-    "rennais":        "rennes",
-    "brestois":       "brest",
-    "saint-germain":  "sg",                # "Paris Saint-Germain" -> "Paris SG"
-    "saint germain":  "sg",
-    "balompié":       "",
-    "balompie":       "",
-    " de fútbol":     "",
-    " de futbol":     "",
-    " de madrid":     " madrid",
-    " de vigo":       " vigo",
-    " de barcelona":  "",
-    " de lens":       " lens",
-    " de marseille":  " marseille",
-    "&":              " and ",
+    "münchen": "munich",
+    "köln": "cologne",
+    "nürnberg": "nuremberg",
+    "hamburger": "hamburg",  # "Hamburger SV" -> Hamburg
+    "lyonnais": "lyon",
+    "rennais": "rennes",
+    "brestois": "brest",
+    "saint-germain": "sg",  # "Paris Saint-Germain" -> "Paris SG"
+    "saint germain": "sg",
+    "balompié": "",
+    "balompie": "",
+    " de fútbol": "",
+    " de futbol": "",
+    " de madrid": " madrid",
+    " de vigo": " vigo",
+    " de barcelona": "",
+    " de lens": " lens",
+    " de marseille": " marseille",
+    "&": " and ",
 }
 
 # Direct alternate-name hints: Polymarket name -> canonical name (both normalised
 # downstream by normalise_name). Use sparingly for genuine alias relationships
 # that no regex can derive (e.g. Athletic Club = Athletic Bilbao).
 CANONICAL_HINTS: dict[str, str] = {
-    "athletic club":         "athletic bilbao",
+    "athletic club": "athletic bilbao",
     # "Rayo Vallecano de Madrid" normalises to "rayo vallecano madrid" because the
     # generic " de madrid" -> " madrid" rule (which Atlético needs) over-reaches here.
     "rayo vallecano madrid": "rayo vallecano",
@@ -47,18 +47,46 @@ CANONICAL_HINTS: dict[str, str] = {
 # NOTE: punctuation is stripped BEFORE these run, so never use \. in a pattern.
 STRIP_PATTERNS: list[str] = [
     # prefixes — longest first, and support the "1." form post-punct-strip as "1 "
-    r"^1\s+fc\s+", r"^1\s+fsv\s+", r"^1\s+",
-    r"^racing\s+club\s+", r"^club\s+",
-    r"^stade\s+(de\s+)?", r"^olympique\s+(de\s+)?",
-    r"^fc\s+", r"^cf\s+", r"^sc\s+",
-    r"^ac\s+", r"^as\s+", r"^rc\s+", r"^ad\s+", r"^afc\s+", r"^aj\s+",
-    r"^bv\s+", r"^sv\s+", r"^tsg\s+", r"^vfb\s+", r"^vfl\s+",
-    r"^rcd\s+", r"^ud\s+", r"^ca\s+", r"^cd\s+", r"^ogc\s+",
+    r"^1\s+fc\s+",
+    r"^1\s+fsv\s+",
+    r"^1\s+",
+    r"^racing\s+club\s+",
+    r"^club\s+",
+    r"^stade\s+(de\s+)?",
+    r"^olympique\s+(de\s+)?",
+    r"^fc\s+",
+    r"^cf\s+",
+    r"^sc\s+",
+    r"^ac\s+",
+    r"^as\s+",
+    r"^rc\s+",
+    r"^ad\s+",
+    r"^afc\s+",
+    r"^aj\s+",
+    r"^bv\s+",
+    r"^sv\s+",
+    r"^tsg\s+",
+    r"^vfb\s+",
+    r"^vfl\s+",
+    r"^rcd\s+",
+    r"^ud\s+",
+    r"^ca\s+",
+    r"^cd\s+",
+    r"^ogc\s+",
     # leading year (e.g. "1899 Hoffenheim" after TSG stripped)
     r"^\d{2,4}\s+",
     # suffixes
-    r"\s+fc$", r"\s+cf$", r"\s+sc$", r"\s+ac$", r"\s+afc$", r"\s+ud$",
-    r"\s+sv$", r"\s+sco$", r"\s+osc$", r"\s+ogc$", r"\s+alsace$",
+    r"\s+fc$",
+    r"\s+cf$",
+    r"\s+sc$",
+    r"\s+ac$",
+    r"\s+afc$",
+    r"\s+ud$",
+    r"\s+sv$",
+    r"\s+sco$",
+    r"\s+osc$",
+    r"\s+ogc$",
+    r"\s+alsace$",
     # trailing year (e.g. "FC Heidenheim 1846")
     r"\s+\d{2,4}$",
 ]

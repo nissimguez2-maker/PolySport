@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
 
 import httpx
@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from polysport.feeds.polymarket import LEAGUE_TAG_ALIASES, list_league_events  # noqa: E402
+from polysport.feeds.polymarket import list_league_events
 
 # Preflight scope: club leagues only. WC 2026 handled separately (national teams).
 TARGET_LEAGUES = ["epl", "ucl", "uel", "seriea", "laliga", "bundesliga", "ligue1"]
@@ -59,7 +59,7 @@ def load_alias_map(sb) -> dict[str, tuple[str, str]]:
     out: dict[str, tuple[str, str]] = {}
     for t in teams:
         out[normalize(t["canonical_name"])] = (t["canonical_name"], t["league"])
-        for a in (t["aliases"] or []):
+        for a in t["aliases"] or []:
             out[normalize(a)] = (t["canonical_name"], t["league"])
     return out
 
@@ -110,15 +110,17 @@ def main() -> int:
                         missing_names[away] += 1
 
             per_league_stats[league] = {
-                "events_total":       len(events),
-                "per_match_events":   len(match_events),
-                "parseable":          parseable,
-                "fully_resolved":     resolved,
+                "events_total": len(events),
+                "per_match_events": len(match_events),
+                "parseable": parseable,
+                "fully_resolved": resolved,
                 "partial_or_missing": partial,
             }
 
     print("=" * 78)
-    print(f"{'LEAGUE':<12} {'events':>7} {'per-match':>10} {'parseable':>10} {'resolved':>9} {'missing':>8}")
+    print(
+        f"{'LEAGUE':<12} {'events':>7} {'per-match':>10} {'parseable':>10} {'resolved':>9} {'missing':>8}"
+    )
     print("-" * 78)
     for league, s in per_league_stats.items():
         print(
