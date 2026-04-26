@@ -81,7 +81,11 @@
       color: var(--text);
       font-family: var(--font-ui);
       font-weight: 400;
-      font-feature-settings: "cv11" 1;
+      /* `cv11` = alt zero, already in use. `case` re-centers punctuation
+         on cap-height so `+`/`−`/`·`/`¢`/`$` align with the all-caps
+         labels and chips. `ss01` is a stylistic-set tweak DM Sans uses
+         for slightly narrower geometry that fits dense layouts. */
+      font-feature-settings: "cv11" 1, "case" 1, "ss01" 1;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
@@ -113,6 +117,10 @@
     .gap-3 { gap: 1rem; }
 
     .mono, .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; }
+    /* Generic muted-text utility. Referenced by fragment.html on stale
+       PM data, missing PnL, and "—" placeholders; previously undefined,
+       so those cells silently inherited --text instead of --muted. */
+    .muted { color: var(--muted); }
 
     /* ─── Header ─────────────────────────────────────────────────────── */
     header.topbar {
@@ -190,8 +198,16 @@
     .league-sa  { background: rgba(78,186,111,0.12);  color: light-dark(#1f7a3d, #4eba6f); border: 1px solid rgba(78,186,111,0.25); }
     .league-ll  { background: rgba(224,82,82,0.12);   color: light-dark(#a81a1a, #e87070); border: 1px solid rgba(224,82,82,0.25); }
     .league-bl  { background: rgba(212,164,24,0.12);  color: light-dark(#7d5b00, #d4a418); border: 1px solid rgba(212,164,24,0.25); }
-    .league-mls { background: rgba(38,166,201,0.12);  color: light-dark(#0e6a87, #5cc4e0); border: 1px solid rgba(38,166,201,0.25); }
-    .league-ere { background: rgba(245,140,82,0.12);  color: light-dark(#9c4612, #f0a06e); border: 1px solid rgba(245,140,82,0.25); }
+    /* MLS: slate steel-blue. Audit P0 found the prior cyan
+       (`rgba(38,166,201)`) was the one "AI-cyan-slop" hue in a no-cyan
+       codebase. Distinct enough from EPL's bright cobalt to read as a
+       separate league. */
+    .league-mls { background: rgba(95,115,145,0.12);  color: light-dark(#3a4a66, #8aa0c4); border: 1px solid rgba(95,115,145,0.25); }
+    /* ERE: khaki-gold. Prior light-orange `rgba(245,140,82)` was nearly
+       identical to L1's `rgba(212,100,40)` and failed the squint test.
+       Khaki-gold sits between L1 (orange) and BL (amber) but desaturated
+       enough that the eye distinguishes all three. */
+    .league-ere { background: rgba(166,140,82,0.12);  color: light-dark(#6e5a20, #c4a868); border: 1px solid rgba(166,140,82,0.25); }
     .league-pri { background: rgba(180,60,80,0.12);   color: light-dark(#871736, #df7088); border: 1px solid rgba(180,60,80,0.25); }
     .league-other { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
 
@@ -222,9 +238,15 @@
       font-family: var(--font-ui);
       font-size: 0.656rem;  /* 10.5px */
       text-transform: uppercase;
-      letter-spacing: 0.07em;
+      /* Smaller caps need looser tracking. 0.07em was too tight at this
+         size; 0.09em opens the letter-fit so labels read as labels, not
+         compressed tag-text. */
+      letter-spacing: 0.09em;
       color: var(--muted);
-      font-weight: 500;
+      /* Weight 400 (was 500). Combined with uppercase + tracking, weight
+         500 made labels compete with section headings; 400 puts them
+         back into "label" territory and frees 500/600 for hierarchy. */
+      font-weight: 400;
     }
     .kpi-value {
       font-family: var(--font-num);
@@ -238,6 +260,15 @@
     .kpi-value.good    { color: var(--green); }
     .kpi-value.bad     { color: var(--red); }
     .kpi-value.caution { color: var(--amber); }
+
+    /* Light text on dark surfaces optically reads as lighter weight than
+       the same color on light. The fix is more leading. Bumps applied
+       to anything carrying a non-trivial number or label height. */
+    @media (prefers-color-scheme: dark) {
+      .kpi-value  { line-height: 1.18; }
+      .brand-name { line-height: 1.18; }
+      .kpi-sub    { line-height: 1.4; }
+    }
     .kpi-sub {
       font-family: var(--font-ui);
       font-size: 0.6875rem;  /* 11px */
@@ -268,15 +299,25 @@
       gap: var(--space-2xs);
       margin-bottom: var(--space-lg);
     }
-    @media (max-width: 1200px) {
+    /* Strip collapse breakpoint matches the Tier-1 grid (900px). Prior
+       value (1200px) made Tier 2 collapse to 2-rows-of-3 while Tier 1
+       was still a single 3-col row, so Tier 2 looked physically bigger
+       than Tier 1 between 1000-1199px — inversion of the design's
+       hierarchy. Now both tiers collapse together. */
+    @media (max-width: 900px) {
       .kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     }
     @media (max-width: 640px) {
       .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
     .kpi-strip .kpi { padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-md); }
-    .kpi-strip .kpi-label { font-size: 0.625rem; /* 10px */ letter-spacing: 0.08em; }
-    .kpi-strip .kpi-value { font-size: 0.95rem; /* ~15px */ margin-top: var(--space-2xs); }
+    .kpi-strip .kpi-label { font-size: 0.625rem; /* 10px */ letter-spacing: 0.1em; }
+    /* 18px / 1.125rem (was 0.95rem). The prior 0.95rem was only 1.07×
+       the table body cell at 0.88rem — a flat ratio that made strip
+       headlines read as prose. 1.125rem restores a real 1.28× step
+       from body to strip-headline, and the Tier-1 34px stays at a
+       comfortable 1.89× above the strip. */
+    .kpi-strip .kpi-value { font-size: 1.125rem; /* 18px */ margin-top: var(--space-2xs); }
     .kpi-strip .pulse { width: 6px; height: 6px; }
 
     /* Tier 3 — paper-trade performance. Same primitive as the health
@@ -284,12 +325,17 @@
        this override the strip used the 6-col grid and left an empty
        third on the right (the visible "void" the layout audit caught).
        Sits directly under its own section-bar — `margin-top: 0` keeps
-       the bar and strip glued together as one logical unit. */
+       the bar and strip glued together as one logical unit.
+       Tiles use --surface2 (subtle tint) instead of --surface so the
+       eye reads "performance results" as visually distinct from the
+       primary health strip above. The 4-lens audit found Tier 2 + 3
+       were squint-test-identical despite meaning different things. */
     .kpi-strip.is-perf {
       grid-template-columns: repeat(4, minmax(0, 1fr));
       margin-top: 0;
     }
-    @media (max-width: 1200px) {
+    .kpi-strip.is-perf .kpi { background: var(--surface2); }
+    @media (max-width: 900px) {
       .kpi-strip.is-perf { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
 
@@ -314,9 +360,27 @@
     }
     .flash-update { animation: flashUpdate 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
+    /* One-shot opportunity flash on the "Trades to place" tile when its
+       value transitions from 0 to non-zero. This is the operational
+       alarm-equivalent for opportunity (per Principle #5: silence when
+       healthy, signal when something happens). The keyed condition
+       lives in the swap JS; this rule is the visual manifestation —
+       a 600ms green outline pulse, not a continuous animation. */
+    @keyframes flashOpportunity {
+      0%   { box-shadow: 0 0 0 0 var(--green-border-strong); }
+      60%  { box-shadow: 0 0 0 6px transparent; }
+      100% { box-shadow: 0 0 0 0 transparent; }
+    }
+    .flash-opportunity { animation: flashOpportunity 600ms cubic-bezier(0.16, 1, 0.3, 1); }
+
     @media (prefers-reduced-motion: reduce) {
       .pulse { animation: none; }
-      .flash-update { animation: none; }
+      /* Explicit transform reset matches the 100% keyframe state — the
+         `forwards` fill mode normally pins the tile to its end state,
+         but resetting to `none` removes the dependency on animation
+         ordering when the user has reduced-motion enabled. */
+      .flash-update { animation: none; transform: none; }
+      .flash-opportunity { animation: none; box-shadow: none; }
       .kpi { transition: none; }
       table.matches tbody tr { transition: none; }
     }
@@ -360,6 +424,11 @@
       border-radius: var(--radius-lg);
       overflow: hidden;
     }
+    /* Positions card: stronger border than the upcoming-fixtures card.
+       Two tables with identical chrome read as equal-importance, but
+       Positions ("what I'm in right now") deserves more weight than
+       Trade window ("what's coming"). Audit P1 #8. */
+    .matches-card.is-positions { border-color: var(--border2); }
     table.matches {
       width: 100%;
       margin: 0;
@@ -371,8 +440,11 @@
       background: var(--surface2);
       font-family: var(--font-ui);
       font-size: 0.656rem;  /* 10.5px */
-      font-weight: 500;
-      letter-spacing: 0.07em;
+      /* Weight 400 (was 500) — same rationale as .kpi-label. The
+         uppercase + tracking carries the "header" weight; 500 was
+         competing with section-label and tier-1 numbers. */
+      font-weight: 400;
+      letter-spacing: 0.09em;
       text-transform: uppercase;
       color: var(--muted);
       padding: 0.65rem 0.8rem;
@@ -432,7 +504,11 @@
     }
     .t-pill.pre    { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
     .t-pill.window { background: var(--amber-dim); color: var(--amber); border: 1px solid var(--amber-border); }
-    .t-pill.live   { background: var(--red-dim);   color: var(--red);   border: 1px solid var(--red-border); }
+    /* `.t-pill.live` was previously `--red`. A live game is informational
+       (we don't trade in-play), not an anomaly — using the red semantic
+       trained the eye to ignore actual alarms. Reads now as a darker
+       neutral, distinct from `.pre` which uses muted-on-surface2. */
+    .t-pill.live   { background: var(--surface2); color: var(--text);  border: 1px solid var(--border2); }
 
     /* Pin age chip — matches league-chip sizing; semantic by staleness */
     .age-chip {
@@ -504,7 +580,12 @@
     /* Spread · Depth merged cell */
     .sd-cell { font-family: var(--font-num); font-size: 0.85rem; color: var(--muted); white-space: nowrap; }
     .sd-sep { color: var(--muted); margin: 0 0.35rem; }
-    .sd-cell .wide      { color: var(--amber); }
+    /* When both fail simultaneously the row would go mono-amber and
+       the operator can't tell which gate tripped. `.wide` keeps the
+       color but adds weight, so it reads as the louder of the two —
+       pricier-but-still-tradeable. `.depth-low` (color only) reads as
+       the quieter signal — gates fail but we know why. */
+    .sd-cell .wide      { color: var(--amber); font-weight: 600; }
     .sd-cell .depth-low { color: var(--amber); }
     .sd-cell .depth-pos { color: var(--text); }
 
@@ -598,10 +679,11 @@
           <span class="league league-ere">ERE</span>
           <span class="league league-pri">PRI</span>
         </div>
-        <span class="meta-sep">·</span>
-        <span class="meta-text">24/7 IL</span>
-        <span class="meta-sep">·</span>
-        <span class="meta-text">Trade zone T-180 → 0 · HT T+45–60</span>
+        {# Separator dots are folded into each meta-text so they wrap as a
+           unit. Previously the standalone .meta-sep elements could orphan
+           onto their own line at ~700–900px viewports. #}
+        <span class="meta-text">· 24/7 IL</span>
+        <span class="meta-text">· Trade zone T-180 → 0 · HT T+45–60</span>
       </div>
     </div>
   </header>
@@ -660,6 +742,18 @@
           value.classList.remove('flash-update');
           void value.offsetWidth;
           value.classList.add('flash-update');
+
+          // Operator alarm-equivalent for OPPORTUNITY: when the count
+          // of tradeable signals goes from 0 to non-zero, pulse the
+          // entire tile in green. One-shot, 600ms — same restraint as
+          // every other motion in the dashboard. Triggers only on the
+          // 0→N transition, so the operator's eye is trained to act
+          // on this and ignore steady-state numbers.
+          if (key === 'Trades to place' && lastValues[key] === '0' && now !== '0') {
+            tile.classList.remove('flash-opportunity');
+            void tile.offsetWidth;
+            tile.classList.add('flash-opportunity');
+          }
         }
       });
     });
