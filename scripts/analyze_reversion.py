@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
+from typing import Any
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -223,7 +224,7 @@ def find_entries(m: Match) -> list[dict]:
 
 def sample_forward(m: Match, entry: dict) -> dict:
     """For each horizon, measure favourable move of Polymarket mid."""
-    results = {}
+    results: dict[int, dict[str, Any] | None] = {}
     for horizon in HORIZONS_MIN:
         t_target = entry["t0"] + timedelta(minutes=horizon)
         tolerance_sec = horizon * 60 * HORIZON_TOLERANCE

@@ -148,16 +148,16 @@ def _nearest(rows: list[dict], t: datetime) -> dict | None:
     thousands of rows per match; switch to bisect if we ever push into millions."""
     if not rows:
         return None
-    best = None
-    best_dt = None
+    best: dict | None = None
+    best_dt: float | None = None
     for r in rows:
         rt = _parse_ts(r["polled_at"])
         if not rt:
             continue
         dt = abs((rt - t).total_seconds())
-        if best is None or dt < best_dt:
+        if best_dt is None or dt < best_dt:
             best, best_dt = r, dt
-    return best if best is not None else None
+    return best
 
 
 def analyse_match(m: Match) -> dict:
@@ -196,14 +196,14 @@ def analyse_match(m: Match) -> dict:
             skipped_stale += 1
             continue
         pin_time = _parse_ts(pin["polled_at"])
-        if abs((pin_time - pm_time).total_seconds()) > STALENESS_SEC:
+        if pin_time is None or abs((pin_time - pm_time).total_seconds()) > STALENESS_SEC:
             skipped_stale += 1
             continue
 
         mid_h = _mid(pm_home)
         mid_d = _mid(pm_draw)
         mid_a = _mid(pm_away)
-        if None in (mid_h, mid_d, mid_a):
+        if mid_h is None or mid_d is None or mid_a is None:
             skipped_bad_book += 1
             continue
 

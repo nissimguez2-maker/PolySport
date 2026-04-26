@@ -87,7 +87,7 @@ def devig_3way(
 
 
 def _power_sum(p_home: float, p_draw: float, p_away: float, k: float) -> float:
-    return p_home**k + p_draw**k + p_away**k
+    return float(p_home**k + p_draw**k + p_away**k)
 
 
 def _make_probs(p_home: float, p_draw: float, p_away: float, k: float, raw_sum: float) -> FairProbs:
