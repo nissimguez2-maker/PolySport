@@ -514,10 +514,13 @@ def main() -> int:
     parser.add_argument(
         "--duration-hours",
         type=float,
-        default=48.0,
+        default=0.0,
         help="Total run time in hours. Script exits 0 when exceeded. "
-        "Default 48 matches STRATEGY.md Phase 1 sanity-check scope. "
-        "Set to 0 for unlimited (ops only — will burn quota).",
+        "Default 0 = unlimited; the original 48h cap (STRATEGY.md Phase 1) "
+        "produced n=12 matches which was too small to evaluate the touch-rate "
+        "gate. Continuous run lets the touch-rate sample size grow until the "
+        "gate verdict is statistically meaningful. Override per-run if you "
+        "want the bounded-window behaviour.",
     )
     parser.add_argument(
         "--active-hours-start",
