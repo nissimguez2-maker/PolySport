@@ -545,6 +545,18 @@
     }
     .vs-sep { color: var(--muted); font-size: 0.8rem; margin: 0 0.35rem; }
 
+    /* `.bet-on` — resolved selection in the positions table ("Dortmund",
+       "Freiburg", "Draw"). Same baseline as a team name but slightly
+       heavier so the eye lands on it as the position's "what we picked"
+       answer. No chip background — chip styling was reserved for action
+       direction (BUY/SELL/SKIP) which is implicit in this column. */
+    .bet-on {
+      font-family: var(--font-ui);
+      font-weight: 600;
+      font-size: 0.92rem;
+      color: var(--text-bright);
+    }
+
     /* Best cell — side + signed divergence (large), fair/mid (small) */
     .best-main {
       display: flex;

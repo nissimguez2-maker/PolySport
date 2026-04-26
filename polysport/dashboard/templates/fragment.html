@@ -162,14 +162,11 @@
     <th scope="col">Kickoff</th>
     <th scope="col">League</th>
     <th scope="col">Match</th>
-    <th scope="col">Side</th>
+    <th scope="col">Bet on</th>
     <th scope="col" class="end">Entry</th>
-    <th scope="col" class="end">Current</th>
-    {# Settlement-conditional PnL replaces the previous Live PnL column.
-       For a hold-to-settlement strategy, the realised PnL will be one
-       of these two values, not the live mid-MTM. #}
+    <th scope="col" class="end">Stake</th>
+    <th scope="col" class="end">Value now</th>
     <th scope="col" class="end">If wins</th>
-    <th scope="col" class="end">If loses</th>
     <th scope="col" class="end">Realized PnL</th>
     <th scope="col">Status</th>
   </tr>
@@ -192,6 +189,20 @@
     {% set status_chip = 'chip-buy' if settled_won else 'chip-sell' %}
   {% endif %}
 {% set pill_class = position_league_map.get(p.league, 'other') %}
+{# "Bet on" label resolves the target_outcome to the actual selected
+   side: home → home team name, away → away team name, draw → "Draw".
+   Replaces the previous "BUY HOME" chip — clearer at a glance. #}
+{% if p.target_outcome == 'home' %}
+  {% set bet_label = p.home %}
+{% elif p.target_outcome == 'away' %}
+  {% set bet_label = p.away %}
+{% else %}
+  {% set bet_label = 'Draw' %}
+{% endif %}
+{# Value-now coloring follows the gain/loss vs stake. Stale snapshots
+   render as a muted dash and skip the gain/loss class. #}
+{% set value_class = 'div-pos' if p.current_value_usd is not none and p.current_value_usd > p.notional_usd
+                else ('div-neg' if p.current_value_usd is not none and p.current_value_usd < p.notional_usd else '') %}
 <tr>
   <td><span class="kickoff-time">{{ decided_local }}</span></td>
   <td><span class="kickoff-time">{{ kickoff_local }}</span></td>
@@ -201,24 +212,18 @@
     <span class="vs-sep">vs</span>
     <span class="team-away">{{ p.away }}</span>
   </td>
-  <td>
-    <span class="chip {% if p.side == 'buy' %}chip-buy{% else %}chip-sell{% endif %}">
-      {{ p.side|upper }} {{ p.target_outcome|upper }}
-    </span>
-  </td>
+  <td><span class="bet-on">{{ bet_label }}</span></td>
   <td class="end">{{ '%.1f'|format(p.entry_price * 100) }}¢</td>
+  <td class="end">${{ '%.2f'|format(p.notional_usd) }}</td>
   <td class="end">
-    {% if p.current_mid is not none %}
-      {{ '%.1f'|format(p.current_mid * 100) }}¢
+    {% if p.current_value_usd is not none %}
+      <span class="best-num {{ value_class }}">${{ '%.2f'|format(p.current_value_usd) }}</span>
     {% else %}
       <span class="muted">stale</span>
     {% endif %}
   </td>
   <td class="end">
     <span class="best-num div-pos">{{ '%+.2f'|format(p.payout_if_wins_usd) }}$</span>
-  </td>
-  <td class="end">
-    <span class="best-num div-neg">{{ '%+.2f'|format(p.payout_if_loses_usd) }}$</span>
   </td>
   <td class="end">
     {% if p.realized_pnl_usd is not none %}

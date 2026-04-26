@@ -74,6 +74,7 @@ class Position:
     expected_edge_cents: float
     current_mid: float | None
     pm_snapshot_age_sec: float | None
+    current_value_usd: float | None  # shares × current_mid; gross dollar holding
     live_pnl_usd: float | None
     payout_if_wins_usd: float
     payout_if_loses_usd: float
@@ -340,10 +341,11 @@ def list_positions(sb, *, days_back: int = 30) -> list[Position]:
                 pm_age_sec = (now - pt).total_seconds()
 
         live_pnl: float | None = None
+        current_value: float | None = None
         if current_mid is not None and entry > 0:
             shares = notional / entry
-            value_now = shares * current_mid
-            live_pnl = value_now - notional
+            current_value = shares * current_mid  # gross holding value in dollars
+            live_pnl = current_value - notional
             if side == "sell":
                 live_pnl = -live_pnl
 
@@ -398,6 +400,7 @@ def list_positions(sb, *, days_back: int = 30) -> list[Position]:
                 expected_edge_cents=edge_cents,
                 current_mid=current_mid,
                 pm_snapshot_age_sec=pm_age_sec,
+                current_value_usd=current_value,
                 live_pnl_usd=live_pnl,
                 payout_if_wins_usd=payout_if_wins,
                 payout_if_loses_usd=payout_if_loses,
