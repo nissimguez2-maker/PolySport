@@ -1,5 +1,11 @@
 -- PolySport Phase 1 schema.
 -- Design principle: raw feeds logged unconditionally; joins happen async; never guess silently.
+--
+-- RLS NOTE (audit deferral, 2026-04-26): every table below has `enable row
+-- level security` but no `create policy` rules. The logger and dashboard
+-- both use SUPABASE_SERVICE_KEY which bypasses RLS, so this has zero
+-- operational impact today. Add explicit policies before introducing any
+-- anon-role access path (e.g. a public dashboard endpoint).
 
 create extension if not exists "pgcrypto";
 

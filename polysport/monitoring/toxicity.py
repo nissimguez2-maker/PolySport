@@ -36,6 +36,18 @@ This module provides:
 Intentionally thin. Phase 2 will flesh out persistence against a
 maker_fills table; for now the scaffold keeps everything in-process so the
 strategy module can import and wire it without touching Supabase schema.
+
+Audit deferral (2026-04-26)
+---------------------------
+External audit flagged in-process state as "loses calibration on every
+Railway redeploy" — true in principle. Deliberately not fixed yet because:
+(a) ToxicityTracker is not wired into any caller — there are no fills to
+    record yet, so the calibration window can't restart because it never
+    starts;
+(b) Persistence requires a maker_fills migration that should be designed
+    once we know the actual write pattern Phase 2 settles on.
+Build the Supabase backing before the first shadow fill is recorded —
+that is the moment the in-process state becomes actually load-bearing.
 """
 
 from __future__ import annotations
