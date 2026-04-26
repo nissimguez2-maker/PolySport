@@ -86,13 +86,7 @@ def load_data(sb) -> tuple[dict[tuple, Match], dict[str, str]]:
         out: list[dict] = []
         last_ts = cutoff
         while True:
-            rows = (
-                query_factory(last_ts)
-                .order(ts_col)
-                .limit(page_size)
-                .execute()
-                .data
-            )
+            rows = query_factory(last_ts).order(ts_col).limit(page_size).execute().data
             if not rows:
                 break
             out.extend(rows)
@@ -103,49 +97,70 @@ def load_data(sb) -> tuple[dict[tuple, Match], dict[str, str]]:
         return out
 
     pin_rows = _keyset_all(
-        lambda since: sb.table("odds_api_snapshots")
-        .select(
-            "home_team_id, away_team_id, commence_time, odds_home, odds_draw, "
-            "odds_away, polled_at, bookmaker"
+        lambda since: (
+            sb.table("odds_api_snapshots")
+            .select(
+                "home_team_id, away_team_id, commence_time, odds_home, odds_draw, "
+                "odds_away, polled_at, bookmaker"
+            )
+            .eq("bookmaker", "pinnacle")
+            .not_.is_("home_team_id", "null")
+            .not_.is_("away_team_id", "null")
+            .not_.is_("odds_home", "null")
+            .gt("polled_at", since)
         )
-        .eq("bookmaker", "pinnacle")
-        .not_.is_("home_team_id", "null")
-        .not_.is_("away_team_id", "null")
-        .not_.is_("odds_home", "null")
-        .gt("polled_at", since)
     )
 
     pm_rows = _keyset_all(
-        lambda since: sb.table("polymarket_snapshots")
-        .select(
-            "home_team_id, away_team_id, outcome_side, best_bid, best_ask, polled_at, commence_time"
+        lambda since: (
+            sb.table("polymarket_snapshots")
+            .select(
+                "home_team_id, away_team_id, outcome_side, best_bid, best_ask, polled_at, commence_time"
+            )
+            .not_.is_("home_team_id", "null")
+            .not_.is_("away_team_id", "null")
+            .not_.is_("outcome_side", "null")
+            .gt("polled_at", since)
         )
-        .not_.is_("home_team_id", "null")
-        .not_.is_("away_team_id", "null")
-        .not_.is_("outcome_side", "null")
-        .gt("polled_at", since)
     )
 
     print(f"Loaded {len(pin_rows)} pinnacle rows, {len(pm_rows)} polymarket rows.", flush=True)
 
-    # Build match index from Pinnacle (it has trustworthy kickoff).
+    # Build match index from Pinnacle (it has trustworthy kickoff). Dedup
+    # within ±KICKOFF_DEDUP_WINDOW: Pinnacle reports kickoffs at minute
+    # precision and small drift (17:00 → 17:01 → 17:02 between successive
+    # polls of the same fixture) was previously creating phantom matches
+    # that all had pts=0 except the first one.
+    KICKOFF_DEDUP_WINDOW = timedelta(minutes=10)
     matches: dict[tuple, Match] = {}
     for r in pin_rows:
         kt = _parse_ts(r["commence_time"])
         if not kt:
             continue
-        key = (r["home_team_id"], r["away_team_id"], kt.replace(second=0, microsecond=0))
-        if key not in matches:
-            matches[key] = Match(
-                home_id=r["home_team_id"],
-                away_id=r["away_team_id"],
-                kickoff=kt,
-                canonical_home=team_name.get(r["home_team_id"], r["home_team_id"]),
-                canonical_away=team_name.get(r["away_team_id"], r["away_team_id"]),
-                pinnacle_polls=[],
-                polymarket_outcomes=defaultdict(list),
-            )
-        matches[key].pinnacle_polls.append(r)
+        # Find an existing match with same teams and kickoff within ±10min.
+        existing_key = next(
+            (
+                k
+                for k in matches
+                if k[0] == r["home_team_id"]
+                and k[1] == r["away_team_id"]
+                and abs((k[2] - kt).total_seconds()) <= KICKOFF_DEDUP_WINDOW.total_seconds()
+            ),
+            None,
+        )
+        if existing_key is not None:
+            matches[existing_key].pinnacle_polls.append(r)
+            continue
+        key = (r["home_team_id"], r["away_team_id"], kt)
+        matches[key] = Match(
+            home_id=r["home_team_id"],
+            away_id=r["away_team_id"],
+            kickoff=kt,
+            canonical_home=team_name.get(r["home_team_id"], r["home_team_id"]),
+            canonical_away=team_name.get(r["away_team_id"], r["away_team_id"]),
+            pinnacle_polls=[r],
+            polymarket_outcomes=defaultdict(list),
+        )
 
     # Attach Polymarket polls to the matching (home, away) pair. Polymarket's
     # commence_time is event creation, not kickoff — we cannot use it for
