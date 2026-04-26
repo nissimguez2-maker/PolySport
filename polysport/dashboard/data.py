@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from polysport.data.paper_trades import summary as paper_trade_summary
 from polysport.math.devig import devig_3way
 
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
@@ -327,6 +328,14 @@ def get_live_state(sb) -> dict:
         if quota_total > 0:
             quota_pct_used = 100.0 * quota["used"] / quota_total
 
+    # Paper-trade tape: 7d running total of strategy-fired entries with
+    # their EV under Pinnacle prior. This is the "how am I doing" panel —
+    # a paper PnL feedback loop while we accumulate Phase 1 data.
+    try:
+        pt_summary = paper_trade_summary(sb, days_back=7)
+    except Exception:
+        pt_summary = None
+
     # Both feeds must be fresh for logger to be considered healthy. A stale
     # Polymarket leg with a fresh Pinnacle leg means every divergence reading
     # is computed against an old PM mid — silently invalid.
@@ -359,4 +368,5 @@ def get_live_state(sb) -> dict:
         "matches": match_rows,
         "fmt_t": _fmt_t,
         "entry_div_cents": ENTRY_DIV_THRESHOLD * 100,
+        "paper_trades": pt_summary,
     }

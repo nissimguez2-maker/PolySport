@@ -53,6 +53,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from polysport.data.paper_trades import record_signal as record_paper_trade
 from polysport.feeds.matcher import TeamMatcher
 from polysport.feeds.odds_api import (
     LEAGUE_TO_SPORT_KEY,
@@ -65,6 +66,10 @@ from polysport.feeds.polymarket import (
     fetch_book,
     list_league_events,
 )
+from polysport.math.devig import devig_3way
+from polysport.sim.honest_fill import EntrySignal as SimEntrySignal
+from polysport.sim.honest_fill import ExitPlan, simulate_round_trip
+from polysport.strategy.moneyline import EntrySignal, Outcome, evaluate_entry
 
 DEFAULT_LEAGUES = ["epl", "ucl", "ligue1", "seriea", "laliga", "bundesliga"]
 
@@ -525,8 +530,179 @@ def one_cycle(
 
     if last_quota_remaining.isdigit() and int(last_quota_remaining) < QUOTA_WARN_THRESHOLD:
         print(f"  ⚠ LOW QUOTA: {last_quota_remaining} remaining", flush=True)
+
+    # Paper-trade tape: evaluate every in-window match against the full
+    # strategy gates and INSERT one row per first-fire. Defensive — any
+    # failure here logs and continues; the cycle's primary job (raw feed
+    # logging) is already complete by this point.
+    try:
+        n_new = _evaluate_and_record_paper_trades(sb)
+        if n_new:
+            print(f"  [paper] +{n_new} new paper-trade entries.", flush=True)
+    except Exception as exc:
+        print(f"  [paper] WARN: {exc!r}", flush=True)
+        traceback.print_exc()
+
     dur = time.monotonic() - started
     print(f"cycle done in {dur:5.1f}s  (polled {total_in_window} Pinnacle events)", flush=True)
+
+
+def _evaluate_and_record_paper_trades(sb) -> int:
+    """For every match currently in a trade window with fresh (≤120s) data
+    on both feeds, run moneyline.evaluate_entry. Insert one paper_trades
+    row per first-fire (unique constraint dedupes subsequent same-match
+    fires automatically).
+
+    The 120s freshness window is the staleness limit; evaluate_entry
+    itself enforces the 60s pinnacle staleness gate from STRATEGY.md
+    so the larger pull window just gives us margin to find the latest
+    valid Pinnacle for each Polymarket moment.
+    """
+    now = datetime.now(UTC)
+    recent_cutoff = (now - timedelta(minutes=10)).isoformat()
+
+    pin_rows = (
+        sb.table("odds_api_snapshots")
+        .select(
+            "home_team_id, away_team_id, commence_time, odds_home, odds_draw, odds_away, polled_at"
+        )
+        .eq("bookmaker", "pinnacle")
+        .gte("polled_at", recent_cutoff)
+        .not_.is_("home_team_id", "null")
+        .not_.is_("away_team_id", "null")
+        .not_.is_("odds_home", "null")
+        .order("polled_at", desc=True)
+        .execute()
+        .data
+    )
+    pm_rows = (
+        sb.table("polymarket_snapshots")
+        .select(
+            "home_team_id, away_team_id, outcome_side, "
+            "best_bid, best_ask, best_bid_depth_usd, best_ask_depth_usd, polled_at"
+        )
+        .gte("polled_at", recent_cutoff)
+        .not_.is_("home_team_id", "null")
+        .not_.is_("outcome_side", "null")
+        .order("polled_at", desc=True)
+        .execute()
+        .data
+    )
+
+    # Latest Pinnacle per (home, away). Dedup on team-pair only — same
+    # rationale as dashboard.data: kickoff jitter creates phantom matches
+    # at minute precision.
+    pin_by_match: dict[tuple[str, str], dict] = {}
+    for r in pin_rows:
+        if not r.get("commence_time"):
+            continue
+        pin_key: tuple[str, str] = (r["home_team_id"], r["away_team_id"])
+        if pin_key not in pin_by_match:
+            pin_by_match[pin_key] = r
+
+    # Latest PM per (home, away, outcome).
+    pm_by_outcome: dict[tuple[str, str, str], dict] = {}
+    for r in pm_rows:
+        pm_key: tuple[str, str, str] = (
+            r["home_team_id"],
+            r["away_team_id"],
+            r["outcome_side"],
+        )
+        if pm_key not in pm_by_outcome:
+            pm_by_outcome[pm_key] = r
+
+    inserted = 0
+    for (home_id, away_id), pin in pin_by_match.items():
+        commence_iso = pin["commence_time"]
+        if not (_in_pre_match_window(commence_iso) or _in_halftime_window(commence_iso)):
+            continue
+
+        kickoff = _parse_iso8601(commence_iso)
+        if kickoff is None:
+            continue
+
+        pin_polled = _parse_iso8601(pin["polled_at"])
+        if pin_polled is None:
+            continue
+        pin_staleness_sec = (now - pin_polled).total_seconds()
+
+        try:
+            fair = devig_3way(
+                float(pin["odds_home"]), float(pin["odds_draw"]), float(pin["odds_away"])
+            )
+        except (ValueError, TypeError):
+            continue
+
+        outcomes: dict[str, Outcome] = {}
+        complete = True
+        for side, fair_p in (("home", fair.home), ("draw", fair.draw), ("away", fair.away)):
+            pm = pm_by_outcome.get((home_id, away_id, side))
+            if not pm:
+                complete = False
+                break
+            bid, ask = pm.get("best_bid"), pm.get("best_ask")
+            if bid is None or ask is None:
+                complete = False
+                break
+            d_bid, d_ask = pm.get("best_bid_depth_usd"), pm.get("best_ask_depth_usd")
+            if d_bid is None or d_ask is None:
+                complete = False
+                break
+            outcomes[side] = Outcome(
+                side=side,  # type: ignore[arg-type]
+                fair=fair_p,
+                best_bid=float(bid),
+                best_ask=float(ask),
+                depth_usd=min(float(d_bid), float(d_ask)),
+            )
+        if not complete:
+            continue
+
+        decision = evaluate_entry(
+            outcomes,  # type: ignore[arg-type]
+            pinnacle_staleness_sec=pin_staleness_sec,
+            has_position=False,  # DB unique constraint enforces single-leg
+        )
+        if not isinstance(decision, EntrySignal):
+            continue
+
+        target = outcomes[decision.target_outcome]
+        sim_entry = SimEntrySignal(
+            match_id=f"{home_id}_{away_id}_{int(kickoff.timestamp())}",
+            side="buy",
+            outcome_side=decision.target_outcome,
+            polymarket_mid=target.mid,
+            polymarket_best_ask=target.best_ask,
+            polymarket_best_bid=target.best_bid,
+            pinnacle_fair=target.fair,
+            notional_usd=5.0,  # STRATEGY.md Stage 1
+            t_minutes_to_kick=(kickoff - now).total_seconds() / 60.0,
+        )
+        sim_result = simulate_round_trip(
+            entry=sim_entry, exit_plan=ExitPlan(kind="hold-to-settlement")
+        )
+
+        was_new = record_paper_trade(
+            sb,
+            home_team_id=home_id,
+            away_team_id=away_id,
+            kickoff=kickoff,
+            minutes_to_kick=(kickoff - now).total_seconds() / 60.0,
+            target_outcome=decision.target_outcome,
+            side="buy",
+            limit_price=decision.limit_price,
+            expected_edge=decision.expected_edge,
+            fair=target.fair,
+            mid=target.mid,
+            pinnacle_staleness_sec=pin_staleness_sec,
+            notional_usd=5.0,
+            sim_entry_price=sim_result.entry_price,
+            sim_net_pnl_ev=sim_result.net_pnl,
+        )
+        if was_new:
+            inserted += 1
+
+    return inserted
 
 
 def main() -> int:
