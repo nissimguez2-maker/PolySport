@@ -151,10 +151,33 @@ def _minutes_to_kick(commence_iso: str) -> float | None:
     return (ct - datetime.now(UTC)).total_seconds() / 60.0
 
 
-def _in_trade_window(commence_iso: str, window_min: int = TRADE_WINDOW_MIN) -> bool:
-    """True iff kickoff is within [0, window_min] minutes ahead."""
+def _in_pre_match_window(commence_iso: str, window_min: int = TRADE_WINDOW_MIN) -> bool:
+    """Pre-match band: kickoff in [0, window_min] minutes ahead."""
     m = _minutes_to_kick(commence_iso)
     return m is not None and 0.0 <= m <= window_min
+
+
+def _in_halftime_window(commence_iso: str) -> bool:
+    """Halftime band: T+45 → T+60 (the break between halves).
+
+    STRATEGY.md treats halftime as a separate trade window — pricing
+    can shift during the 15-min break before the second half starts.
+    NOT live in-play (the game is paused, latency-tolerant), so it's
+    consistent with the "no live in-play" rule.
+
+    A coverage audit on 2026-04-26 found 0/17 matches had any halftime
+    poll because the previous _in_trade_window only matched non-negative
+    minutes_to_kick. Halftime predicate added separately so the two
+    bands stay distinct in callers that need to know which one fired.
+    """
+    m = _minutes_to_kick(commence_iso)
+    return m is not None and -60.0 <= m <= -45.0
+
+
+def _in_trade_window(commence_iso: str, window_min: int = TRADE_WINDOW_MIN) -> bool:
+    """True iff the match is currently in either active trade band:
+    pre-match [T-window_min, T-0] or halftime [T+45, T+60]."""
+    return _in_pre_match_window(commence_iso, window_min) or _in_halftime_window(commence_iso)
 
 
 def _cadence_for_cycle(
@@ -164,19 +187,21 @@ def _cadence_for_cycle(
     fine_sec: int,
     fine_threshold_min: int,
 ) -> int:
-    """Pick the poll interval for the next cycle based on how close the
-    nearest in-window match is to kickoff. Fine cadence kicks in once any
-    match sits in T-<fine_threshold_min> → kickoff."""
-    min_minutes = None
+    """Pick the poll interval for the next cycle.
+
+    Fine cadence applies when any match is either:
+      - within fine_threshold_min of kickoff (final-hour edge volatility), or
+      - currently in halftime (15-min window, every snapshot is precious).
+    """
     for evs in schedule.values():
         for ev in evs:
             m = _minutes_to_kick(ev.commence_time)
-            if m is None or m < 0 or m > TRADE_WINDOW_MIN:
+            if m is None:
                 continue
-            if min_minutes is None or m < min_minutes:
-                min_minutes = m
-    if min_minutes is not None and min_minutes <= fine_threshold_min:
-        return fine_sec
+            if 0.0 <= m <= fine_threshold_min:
+                return fine_sec
+            if -60.0 <= m <= -45.0:
+                return fine_sec
     return coarse_sec
 
 
@@ -440,9 +465,13 @@ def one_cycle(
                 n, quota = poll_event_odds(sb, http, matcher, api_key, ev)
                 last_quota_remaining = quota.get("remaining", "?")
                 _persist_quota(sb, quota)
+                # Halftime polls show as "T+50m" etc.; pre-match keeps the
+                # familiar "T-30m" countdown. Sign comes from minutes_to_kick.
+                when = f"T-{mins:4.0f}m" if mins >= 0 else f"T+{-mins:3.0f}m"
+                tag = "HT " if _in_halftime_window(ev.commence_time) else "   "
                 print(
-                    f"  [odds_api {lg:<10}] {ev.home_team_raw} vs "
-                    f"{ev.away_team_raw}  T-{mins:4.0f}m  "
+                    f"  [odds_api {lg:<10}] {tag}{ev.home_team_raw} vs "
+                    f"{ev.away_team_raw}  {when}  "
                     f"wrote {n} rows  quota_remaining={last_quota_remaining}",
                     flush=True,
                 )
