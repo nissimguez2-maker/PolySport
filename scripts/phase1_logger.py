@@ -24,7 +24,8 @@ Design:
 
 Cadence config (env-var overridable at the top of this file):
   POLL_INTERVAL_COARSE_SEC=60   poll interval for T-180 → T-60 matches
-  POLL_INTERVAL_FINE_SEC=20     poll interval once any match enters T-60 → kickoff
+  POLL_INTERVAL_FINE_SEC=60     poll interval once any match enters T-60 → kickoff
+                                (matches coarse — see comment at the constant)
   POLL_FINE_THRESHOLD_MIN=60    minutes-to-kick boundary between the two bands
 
 Active-hours default (2026-04-26): always-on. The previous 14:00–22:30 IL
@@ -32,13 +33,14 @@ window missed every MLS kickoff (02:00–05:30 IL). Always-on adds ~5–10k
 credits/month for MLS coverage, which the upgraded 100k tier accommodates.
 
 Quota math (illustrative, 9 default leagues, always-on, parallel PM fetch):
-  Coarse band: 1 call / match / 60s × 120 min coarse window ≈ 120 calls.
-  Fine band:   1 call / match / 20s × 60 min fine window   = 180 calls.
-  Halftime:    1 call / match / 20s × 15 min halftime band =  45 calls.
-  Per fully-tracked match: 120 + 180 + 45 ≈ 345 credits.
-  At ~270 matches/month across 9 leagues: ≈ 93k credits/mo — fits the
-  100k Odds API tier with ~7k buffer. Drop fine to 25s if you want
-  more headroom (~81k/mo). See STRATEGY.md "Timing".
+  Coarse band: 1 call / match / 60s × 120 min coarse window = 120 calls.
+  Fine band:   1 call / match / 60s × 60 min fine window   =  60 calls.
+  Halftime:    1 call / match / 60s × 15 min halftime band =  15 calls.
+  Per fully-tracked match: 120 + 60 + 15 ≈ 195 credits.
+  At ~270 matches/month across 9 leagues: ≈ 53k credits/mo — well under
+  the 100k Odds API tier with ~47k buffer. To tighten fine cadence later
+  we'd need cross-league parallelism (sequential per-league processing
+  currently caps the cycle at ~57s). See STRATEGY.md "Timing".
 """
 
 from __future__ import annotations
@@ -94,10 +96,14 @@ DEFAULT_LEAGUES = [
 
 # Cadence config. Env vars win over the defaults so Railway can tune without
 # redeploying code. Tiered: coarse far from kickoff, fine in the final hour.
-# Fine cadence tightened 30s → 20s on 2026-04-26 — Polymarket book fetches
-# now run in parallel (PM_BOOK_FETCH_WORKERS), so the cycle keeps up at 20s.
+# Fine reset to 60s on 2026-04-26 after empirical cycle-time measurement:
+# even with parallel PM book fetches, sequential per-league processing
+# pegs each cycle at ~57s. Targeting 20s just spammed "running hot" warns
+# without actually polling faster. 60s = honest target = clean logs;
+# revisit (with cross-league parallelism) only if Phase 1 data shows
+# strategy is missing fast price moves.
 POLL_INTERVAL_COARSE_SEC = int(os.getenv("POLL_INTERVAL_COARSE_SEC", "60"))
-POLL_INTERVAL_FINE_SEC = int(os.getenv("POLL_INTERVAL_FINE_SEC", "20"))
+POLL_INTERVAL_FINE_SEC = int(os.getenv("POLL_INTERVAL_FINE_SEC", "60"))
 POLL_FINE_THRESHOLD_MIN = int(os.getenv("POLL_FINE_THRESHOLD_MIN", "60"))
 
 TRADE_WINDOW_MIN = 120  # poll /events/{id}/odds only for matches kicking off within this many min
