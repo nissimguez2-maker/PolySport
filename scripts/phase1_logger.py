@@ -77,6 +77,7 @@ POLL_FINE_THRESHOLD_MIN = int(os.getenv("POLL_FINE_THRESHOLD_MIN", "60"))
 TRADE_WINDOW_MIN = 120  # poll /events/{id}/odds only for matches kicking off within this many min
 SCHEDULE_SCAN_EVERY_SEC = 600  # free /events refresh cadence (10 min)
 QUOTA_WARN_THRESHOLD = 500  # warn once Odds API remaining drops below this
+QUOTA_HARD_FLOOR = 100  # skip paid Pinnacle calls below this (free Polymarket continues)
 
 # Strip trailing secondary-market tokens from Polymarket titles so the home/away
 # parse only sees moneyline events.
@@ -356,6 +357,21 @@ def _resolve(
     return r.team_id if r else None
 
 
+def _read_quota_remaining(sb) -> int | None:
+    """Latest known Odds API remaining-quota reading from the singleton row.
+
+    Returns None on first run / migration not applied / read error so the
+    caller can default to "proceed" rather than wedging the logger.
+    """
+    try:
+        rows = (sb.table("odds_api_quota").select("remaining").eq("id", 1).limit(1).execute()).data
+        if rows and rows[0].get("remaining") is not None:
+            return int(rows[0]["remaining"])
+    except Exception as exc:
+        print(f"  [quota read] WARN: {exc!r}", flush=True)
+    return None
+
+
 def _persist_quota(sb, quota: dict[str, str]) -> None:
     """Upsert latest Odds API quota headers into the singleton odds_api_quota row.
 
@@ -404,8 +420,20 @@ def one_cycle(
             flush=True,
         )
 
-    last_quota_remaining = "?"
-    for lg, evs in in_window.items():
+    # Hard quota floor: stop spending paid Odds API calls below this. Polymarket
+    # is free so it keeps polling — partial data beats running into 429s.
+    quota_remaining = _read_quota_remaining(sb)
+    quota_blocked = quota_remaining is not None and quota_remaining < QUOTA_HARD_FLOOR
+    if quota_blocked:
+        print(
+            f"  ⚠ QUOTA FLOOR: {quota_remaining} remaining < {QUOTA_HARD_FLOOR} — "
+            f"skipping all paid Odds API calls this cycle.",
+            flush=True,
+        )
+
+    last_quota_remaining = "?" if quota_remaining is None else str(quota_remaining)
+    paid_pinnacle_iter = [] if quota_blocked else list(in_window.items())
+    for lg, evs in paid_pinnacle_iter:
         for ev in evs:
             mins = _minutes_to_kick(ev.commence_time) or 0.0
             try:
