@@ -26,6 +26,7 @@ import argparse
 import os
 import sys
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -95,47 +96,85 @@ def load_data(sb) -> dict[tuple, Match]:
     teams = sb.table("teams").select("id, canonical_name").execute().data
     team_name = {t["id"]: t["canonical_name"] for t in teams}
 
-    pin_rows = (
-        sb.table("odds_api_snapshots")
-        .select(
-            "home_team_id, away_team_id, commence_time, odds_home, "
-            "odds_draw, odds_away, polled_at, bookmaker"
+    # Paginated keyset reads — supabase-py caps each .execute() at 1000 rows
+    # and the pm table is 260k+; naive offset-pagination times out on the
+    # PostgREST side. Same approach as analyze_divergence.py.
+    cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+
+    def _keyset_all(
+        query_factory: Callable[[str], Any], ts_col: str = "polled_at", page_size: int = 1000
+    ) -> list[dict]:
+        out: list[dict] = []
+        last_ts = cutoff
+        while True:
+            rows = query_factory(last_ts).order(ts_col).limit(page_size).execute().data
+            if not rows:
+                break
+            out.extend(rows)
+            if len(rows) < page_size:
+                break
+            last_ts = rows[-1][ts_col]
+        return out
+
+    pin_rows = _keyset_all(
+        lambda since: (
+            sb.table("odds_api_snapshots")
+            .select(
+                "home_team_id, away_team_id, commence_time, odds_home, "
+                "odds_draw, odds_away, polled_at, bookmaker"
+            )
+            .eq("bookmaker", "pinnacle")
+            .not_.is_("home_team_id", "null")
+            .not_.is_("away_team_id", "null")
+            .not_.is_("odds_home", "null")
+            .gt("polled_at", since)
         )
-        .eq("bookmaker", "pinnacle")
-        .not_.is_("home_team_id", "null")
-        .not_.is_("away_team_id", "null")
-        .not_.is_("odds_home", "null")
-        .execute()
-        .data
     )
 
-    pm_rows = (
-        sb.table("polymarket_snapshots")
-        .select("home_team_id, away_team_id, outcome_side, best_bid, best_ask, polled_at")
-        .not_.is_("home_team_id", "null")
-        .not_.is_("away_team_id", "null")
-        .not_.is_("outcome_side", "null")
-        .execute()
-        .data
+    pm_rows = _keyset_all(
+        lambda since: (
+            sb.table("polymarket_snapshots")
+            .select("home_team_id, away_team_id, outcome_side, best_bid, best_ask, polled_at")
+            .not_.is_("home_team_id", "null")
+            .not_.is_("away_team_id", "null")
+            .not_.is_("outcome_side", "null")
+            .gt("polled_at", since)
+        )
     )
 
+    print(f"Loaded {len(pin_rows)} pinnacle rows, {len(pm_rows)} polymarket rows.", flush=True)
+
+    # Dedup matches whose Pinnacle-reported kickoffs drift ≤10min between
+    # successive polls (same fixture, slightly-different commence_time string).
+    KICKOFF_DEDUP_WINDOW = timedelta(minutes=10)
     matches: dict[tuple, Match] = {}
     for r in pin_rows:
         kt = _parse_ts(r["commence_time"])
         if not kt:
             continue
-        key = (r["home_team_id"], r["away_team_id"], kt.replace(second=0, microsecond=0))
-        if key not in matches:
-            matches[key] = Match(
-                home_id=r["home_team_id"],
-                away_id=r["away_team_id"],
-                kickoff=kt,
-                canonical_home=team_name.get(r["home_team_id"], r["home_team_id"]),
-                canonical_away=team_name.get(r["away_team_id"], r["away_team_id"]),
-                pinnacle_polls=[],
-                polymarket_outcomes=defaultdict(list),
-            )
-        matches[key].pinnacle_polls.append(r)
+        existing_key = next(
+            (
+                k
+                for k in matches
+                if k[0] == r["home_team_id"]
+                and k[1] == r["away_team_id"]
+                and abs((k[2] - kt).total_seconds()) <= KICKOFF_DEDUP_WINDOW.total_seconds()
+            ),
+            None,
+        )
+        if existing_key is not None:
+            matches[existing_key].pinnacle_polls.append(r)
+            continue
+        key = (r["home_team_id"], r["away_team_id"], kt)
+        matches[key] = Match(
+            home_id=r["home_team_id"],
+            away_id=r["away_team_id"],
+            kickoff=kt,
+            canonical_home=team_name.get(r["home_team_id"], r["home_team_id"]),
+            canonical_away=team_name.get(r["away_team_id"], r["away_team_id"]),
+            pinnacle_polls=[r],
+            polymarket_outcomes=defaultdict(list),
+        )
 
     for r in pm_rows:
         cand = [k for k in matches if k[0] == r["home_team_id"] and k[1] == r["away_team_id"]]
