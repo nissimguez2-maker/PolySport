@@ -84,12 +84,19 @@
 </div>
 
 {# Paper-trade tape: 7d running total of strategy-fired entries.
-   Shadow PnL feedback loop while Phase 1 data accumulates. #}
+   Shadow PnL feedback loop while Phase 1 data accumulates. The section
+   bar separates it visually from the Tier-2 health strip — same
+   tile primitive, but a different *meaning* (cumulative performance
+   vs transient health). The squint test should now distinguish them. #}
 {% if state.paper_trades is not none %}
 {% set pt = state.paper_trades %}
-<div class="kpi-strip">
+<div class="section-bar is-tight">
+  <h2 class="section-label">Paper trades · 7 days</h2>
+  <span class="section-meta">shadow PnL — phase 1 only, no real money at risk</span>
+</div>
+<div class="kpi-strip is-perf">
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Paper trades · 7d</div>
+    <div class="kpi-label">Trades placed</div>
     <div class="kpi-value {% if pt.n_total > 0 %}good{% endif %}">
       {{ pt.n_total }}{% if pt.n_pending > 0 %} · {{ pt.n_pending }} pending{% endif %}
     </div>
@@ -104,7 +111,7 @@
   </div>
 
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Best signal · 7d</div>
+    <div class="kpi-label">Best signal</div>
     <div class="kpi-value {% if pt.best_edge_cents >= state.entry_div_cents %}good{% elif pt.best_edge_cents > 0 %}caution{% endif %}">
       {{ '%+.2f'|format(pt.best_edge_cents) }}¢
     </div>
