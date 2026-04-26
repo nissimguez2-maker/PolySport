@@ -33,6 +33,7 @@ LEAGUES = {
     "swiss": "Swiss Super League",
     "austrian": "Austrian Bundesliga",
     "greek": "Greek Super League",
+    "mls": "American Major League Soccer",
 }
 
 SPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"

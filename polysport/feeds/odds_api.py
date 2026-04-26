@@ -29,6 +29,9 @@ LEAGUE_TO_SPORT_KEY: dict[str, str] = {
     "laliga": "soccer_spain_la_liga",
     "bundesliga": "soccer_germany_bundesliga",
     "ligue1": "soccer_france_ligue_one",
+    "mls": "soccer_usa_mls",
+    "eredivisie": "soccer_netherlands_eredivisie",
+    "primeira": "soccer_portugal_primeira_liga",
 }
 
 

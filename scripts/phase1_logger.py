@@ -27,12 +27,13 @@ Cadence config (env-var overridable at the top of this file):
   POLL_INTERVAL_FINE_SEC=30     poll interval once any match enters T-60 → kickoff
   POLL_FINE_THRESHOLD_MIN=60    minutes-to-kick boundary between the two bands
 
-Quota math (illustrative, 6 default leagues, mixed evening EU slate):
+Quota math (illustrative, 9 default leagues — 6 European top + MLS, Eredivisie,
+Primeira Liga added 2026-04-26):
   Coarse band: 1 call / match / 60s * 120 min window-depth avg / match ≈ 120 calls.
   Fine band overrides the final hour: that hour becomes 2 calls/min, so +60 extra.
   Per-match spend roughly 120 + 60 = 180 credits in fully-in-window evening games.
-  At ~216 matches/month typical across 6 EU leagues, spend ≈ 30-38k credits/mo —
-  right at the 30k tier boundary. See STRATEGY.md "Timing" for the reasoning.
+  At ~280 matches/month typical across 9 leagues, spend ≈ 45-55k credits/mo —
+  requires a tier above the $30/mo Starter (20k). See STRATEGY.md "Timing".
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ from supabase import create_client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from polysport.data.paper_trades import record_signal as record_paper_trade
+from polysport.data.resolver import resolve_batch
 from polysport.feeds.matcher import TeamMatcher
 from polysport.feeds.odds_api import (
     LEAGUE_TO_SPORT_KEY,
@@ -71,7 +73,17 @@ from polysport.sim.honest_fill import EntrySignal as SimEntrySignal
 from polysport.sim.honest_fill import ExitPlan, simulate_round_trip
 from polysport.strategy.moneyline import EntrySignal, Outcome, evaluate_entry
 
-DEFAULT_LEAGUES = ["epl", "ucl", "ligue1", "seriea", "laliga", "bundesliga"]
+DEFAULT_LEAGUES = [
+    "epl",
+    "ucl",
+    "ligue1",
+    "seriea",
+    "laliga",
+    "bundesliga",
+    "mls",
+    "eredivisie",
+    "primeira",
+]
 
 # Cadence config. Env vars win over the defaults so Railway can tune without
 # redeploying code. Tiered: coarse far from kickoff, fine in the final hour.
@@ -578,7 +590,7 @@ def _evaluate_and_record_paper_trades(sb) -> int:
     pm_rows = (
         sb.table("polymarket_snapshots")
         .select(
-            "home_team_id, away_team_id, outcome_side, "
+            "home_team_id, away_team_id, outcome_side, market_id, raw, "
             "best_bid, best_ask, best_bid_depth_usd, best_ask_depth_usd, polled_at"
         )
         .gte("polled_at", recent_cutoff)
@@ -667,6 +679,15 @@ def _evaluate_and_record_paper_trades(sb) -> int:
             continue
 
         target = outcomes[decision.target_outcome]
+        # Capture Polymarket keys from the matched outcome's snapshot so the
+        # resolver (scripts/resolve_paper_trades.py) can settle this row
+        # post-match without having to re-derive the market via the matcher.
+        target_pm = pm_by_outcome.get((home_id, away_id, decision.target_outcome)) or {}
+        target_condition_id = target_pm.get("market_id")
+        target_raw = target_pm.get("raw") or {}
+        target_yes_token_id = (
+            target_raw.get("yes_token_id") if isinstance(target_raw, dict) else None
+        )
         sim_entry = SimEntrySignal(
             match_id=f"{home_id}_{away_id}_{int(kickoff.timestamp())}",
             side="buy",
@@ -698,6 +719,8 @@ def _evaluate_and_record_paper_trades(sb) -> int:
             notional_usd=5.0,
             sim_entry_price=sim_result.entry_price,
             sim_net_pnl_ev=sim_result.net_pnl,
+            polymarket_condition_id=target_condition_id,
+            polymarket_yes_token_id=target_yes_token_id,
         )
         if was_new:
             inserted += 1
@@ -819,13 +842,20 @@ def main() -> int:
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
         timeout=httpx.Timeout(15.0, connect=5.0),
     ) as http:
+        schedule: dict[str, list[EventSummary]] = {}
+
         if args.once:
             schedule = poll_schedule(http, api_key, args.leagues)
             one_cycle(sb, http, matcher, api_key, args.leagues, schedule)
             return 0
 
-        schedule: dict[str, list[EventSummary]] = {}
         last_scan_at = 0.0
+        # Hourly paper-trade settlement runs in-process (Option A): one
+        # less Railway service to manage. resolve_batch is idempotent and
+        # exception-isolated, so a flaky Gamma response can't hurt the
+        # logger's primary job. First run fires ~3600s after boot.
+        last_resolve_at = time.monotonic()
+        resolve_interval_sec = 3600.0
 
         while not _stop:
             if run_deadline is not None and time.monotonic() >= run_deadline:
@@ -879,6 +909,25 @@ def main() -> int:
                 flush=True,
             )
             one_cycle(sb, http, matcher, api_key, args.leagues, schedule)
+
+            # Hourly resolver tick. Wrapped so any failure stays out of
+            # the cycle's hot path — the logger's job is to keep logging
+            # snapshots even if Polymarket Gamma is down.
+            if (time.monotonic() - last_resolve_at) >= resolve_interval_sec:
+                last_resolve_at = time.monotonic()
+                try:
+                    counts = resolve_batch(sb, http, max_rows=50)
+                    if counts.settled or counts.errors:
+                        print(
+                            f"[resolver] settled={counts.settled} "
+                            f"unresolved_skip={counts.skipped_unresolved} "
+                            f"missing={counts.skipped_missing} "
+                            f"errors={counts.errors}",
+                            flush=True,
+                        )
+                except Exception as exc:
+                    print(f"[resolver] failed (continuing): {exc}", flush=True)
+
             elapsed = time.monotonic() - cycle_start
             if elapsed > cadence_sec:
                 print(

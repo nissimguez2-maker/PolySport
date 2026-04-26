@@ -35,6 +35,12 @@ LEAGUE_TAG_ALIASES: dict[str, list[str]] = {
     "bundesliga": ["bundesliga"],
     "ligue1": ["ligue-1"],
     "worldcup": ["fifa-world-cup", "world-cup"],
+    "mls": ["mls"],
+    # Polymarket abbreviates Eredivisie as 'ere' — verified empirically
+    # 2026-04-26 (other obvious slugs like 'eredivisie' / 'dutch-eredivisie'
+    # return zero events).
+    "eredivisie": ["ere"],
+    "primeira": ["primeira-liga"],
 }
 
 

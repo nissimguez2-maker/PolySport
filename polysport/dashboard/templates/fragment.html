@@ -119,6 +119,102 @@
 </div>
 {% endif %}
 
+{# Positions — what the bot is in, live MTM, realized PnL once resolved.
+   Sits above the live-match table because it answers "how am I doing" at
+   a glance, which is the user's first question on landing. #}
+<div class="section-bar">
+  <h2 class="section-label">Positions</h2>
+  <span class="section-meta">paper trades · last 30 days · live mark-to-market</span>
+</div>
+
+{% if state.positions %}
+<div class="matches-card">
+<div class="table-responsive">
+<table class="matches">
+<thead>
+  <tr>
+    <th scope="col">Decided</th>
+    <th scope="col">Kickoff</th>
+    <th scope="col">League</th>
+    <th scope="col">Match</th>
+    <th scope="col">Side</th>
+    <th scope="col" class="end">Entry</th>
+    <th scope="col" class="end">Current</th>
+    <th scope="col" class="end">Live PnL</th>
+    <th scope="col" class="end">Realized PnL</th>
+    <th scope="col">Status</th>
+  </tr>
+</thead>
+<tbody>
+{% for p in state.positions %}
+  {% set decided_local = p.decided_at.astimezone(state.positions_tz).strftime('%d %b %H:%M') %}
+  {% set kickoff_local = p.kickoff.astimezone(state.positions_tz).strftime('%d %b %H:%M') %}
+  {% set live_class = 'div-pos' if p.live_pnl_usd is not none and p.live_pnl_usd > 0
+                else ('div-neg' if p.live_pnl_usd is not none and p.live_pnl_usd < 0 else 'muted') %}
+  {% set realized_class = 'div-pos' if p.realized_pnl_usd is not none and p.realized_pnl_usd > 0
+                     else ('div-neg' if p.realized_pnl_usd is not none and p.realized_pnl_usd < 0 else 'muted') %}
+  {% if p.status == 'open' %}
+    {% set status_label = 'OPEN' %}{% set status_chip = 'chip-buy' %}
+  {% elif p.status == 'pending_settle' %}
+    {% set status_label = 'PENDING' %}{% set status_chip = 'chip-skip' %}
+  {% else %}
+    {% set settled_won = p.realized_pnl_usd is not none and p.realized_pnl_usd > 0 %}
+    {% set status_label = 'WON' if settled_won else 'LOST' %}
+    {% set status_chip = 'chip-buy' if settled_won else 'chip-sell' %}
+  {% endif %}
+<tr>
+  <td><span class="kickoff-time">{{ decided_local }}</span></td>
+  <td><span class="kickoff-time">{{ kickoff_local }}</span></td>
+  <td><span class="league league-other">{{ p.league|upper if p.league else '—' }}</span></td>
+  <td class="match-cell">
+    <span class="team-home">{{ p.home }}</span>
+    <span class="vs-sep">vs</span>
+    <span class="team-away">{{ p.away }}</span>
+  </td>
+  <td>
+    <span class="chip {% if p.side == 'buy' %}chip-buy{% else %}chip-sell{% endif %}">
+      {{ p.side|upper }} {{ p.target_outcome|upper }}
+    </span>
+  </td>
+  <td class="end">{{ '%.3f'|format(p.entry_price) }}</td>
+  <td class="end">
+    {% if p.current_mid is not none %}
+      {{ '%.3f'|format(p.current_mid) }}
+    {% else %}
+      <span class="muted">stale</span>
+    {% endif %}
+  </td>
+  <td class="end">
+    {% if p.live_pnl_usd is not none %}
+      <span class="best-num {{ live_class }}">{{ '%+.2f'|format(p.live_pnl_usd) }}$</span>
+    {% else %}
+      <span class="muted">—</span>
+    {% endif %}
+  </td>
+  <td class="end">
+    {% if p.realized_pnl_usd is not none %}
+      <span class="best-num {{ realized_class }}">{{ '%+.2f'|format(p.realized_pnl_usd) }}$</span>
+    {% else %}
+      <span class="muted">—</span>
+    {% endif %}
+  </td>
+  <td><span class="chip {{ status_chip }}">{{ status_label }}</span></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</div>
+{% else %}
+<div class="empty-state">
+  <svg width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" focusable="false">
+    <circle cx="20" cy="20" r="16" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+  </svg>
+  <div class="empty-state__label">No paper-trade positions yet</div>
+  <div class="empty-state__hint">A position appears here once the strategy fires on a fresh divergence.</div>
+</div>
+{% endif %}
+
 {# Section bar #}
 <div class="section-bar">
   <h2 class="section-label">Live matches</h2>
@@ -127,13 +223,16 @@
 
 {% if state.matches %}
 {% set league_map = {
-  'soccer_epl':                   ['epl', 'EPL'],
-  'soccer_uefa_champs_league':    ['ucl', 'UCL'],
-  'soccer_uefa_europa_league':    ['other', 'UEL'],
-  'soccer_france_ligue_one':      ['l1',  'Ligue 1'],
-  'soccer_italy_serie_a':         ['sa',  'Serie A'],
-  'soccer_spain_la_liga':         ['ll',  'La Liga'],
-  'soccer_germany_bundesliga':    ['bl',  'Bundesliga']
+  'soccer_epl':                       ['epl',   'EPL'],
+  'soccer_uefa_champs_league':        ['ucl',   'UCL'],
+  'soccer_uefa_europa_league':        ['other', 'UEL'],
+  'soccer_france_ligue_one':          ['l1',    'Ligue 1'],
+  'soccer_italy_serie_a':             ['sa',    'Serie A'],
+  'soccer_spain_la_liga':             ['ll',    'La Liga'],
+  'soccer_germany_bundesliga':        ['bl',    'Bundesliga'],
+  'soccer_usa_mls':                   ['other', 'MLS'],
+  'soccer_netherlands_eredivisie':    ['other', 'Eredivisie'],
+  'soccer_portugal_primeira_liga':    ['other', 'Primeira']
 } %}
 <div class="matches-card">
 <div class="table-responsive">

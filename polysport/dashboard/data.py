@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from polysport.data.paper_trades import list_positions as paper_trade_positions
 from polysport.data.paper_trades import summary as paper_trade_summary
 from polysport.data.snapshots import keyset_paginate
 from polysport.math.devig import devig_3way
@@ -358,6 +359,13 @@ def get_live_state(sb) -> dict:
     except Exception:
         pt_summary = None
 
+    # Per-position list with live mark-to-market and realized PnL —
+    # answers "what positions am I in and how are they doing right now."
+    try:
+        pt_positions = paper_trade_positions(sb, days_back=30)
+    except Exception:
+        pt_positions = []
+
     # Both feeds must be fresh for logger to be considered healthy. A stale
     # Polymarket leg with a fresh Pinnacle leg means every divergence reading
     # is computed against an old PM mid — silently invalid.
@@ -391,4 +399,6 @@ def get_live_state(sb) -> dict:
         "fmt_t": _fmt_t,
         "entry_div_cents": ENTRY_DIV_THRESHOLD * 100,
         "paper_trades": pt_summary,
+        "positions": pt_positions,
+        "positions_tz": ISRAEL_TZ,
     }
