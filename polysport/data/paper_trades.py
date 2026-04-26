@@ -2,9 +2,10 @@
 
 Writer: scripts/phase1_logger.py — at the end of each cycle, evaluate the
         strategy against fresh data and INSERT one row per fired signal.
-        The unique (home_team_id, away_team_id, kickoff) constraint
-        enforces single-leg-per-match; subsequent same-match cycles
-        silently no-op.
+        The unique (home_team_id, away_team_id, kickoff_hour) constraint
+        (migration 004) enforces single-leg-per-match while absorbing
+        Pinnacle's minute-level commence_time jitter. Subsequent
+        same-match cycles silently no-op.
 
 Reader: polysport/dashboard/data.py — builds a 7-day summary for the
         dashboard's "Paper trades" panel.
@@ -108,10 +109,7 @@ def summary(sb, *, days_back: int = 7) -> PaperTradeSummary:
     cutoff = (datetime.now(UTC) - timedelta(days=days_back)).isoformat()
     rows = (
         sb.table("paper_trades")
-        .select(
-            "decided_at, kickoff, expected_edge, sim_net_pnl_ev, "
-            "realized_pnl, settled_at"
-        )
+        .select("decided_at, kickoff, expected_edge, sim_net_pnl_ev, realized_pnl, settled_at")
         .gte("decided_at", cutoff)
         .order("decided_at", desc=True)
         .execute()

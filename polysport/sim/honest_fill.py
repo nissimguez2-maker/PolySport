@@ -220,11 +220,26 @@ def simulate_round_trip(
 
 
 def _compute_entry_price(entry: EntrySignal) -> float:
-    """Maker limit 0.5c inside the mid, on the correct side."""
+    """Maker limit 0.5c inside the current best, on the underpriced side.
+
+    For a buy: post just below the best ask (= best_ask − 0.005).
+    For a sell: post just above the best bid (= best_bid + 0.005).
+
+    This MUST stay in lockstep with polysport.strategy.moneyline's
+    limit-price calculation. If the two drift, paper_trades records
+    `limit_price` (strategy) and `sim_entry_price` (sim) from different
+    formulas — shadow PnL becomes silently biased better than reality,
+    which is the exact PolyGuez killer this module exists to prevent.
+
+    A previous version computed `polymarket_mid ∓ offset`. With a 3c
+    spread that biased entry price ~1c per share toward the wrong side
+    of the spread, fattening sim PnL by ~5% per fill at $5 stake. The
+    audit on 2026-04-26 caught this.
+    """
     offset = 0.005
     if entry.side == "buy":
-        return entry.polymarket_mid - offset
-    return entry.polymarket_mid + offset
+        return entry.polymarket_best_ask - offset
+    return entry.polymarket_best_bid + offset
 
 
 def _compute_exit(

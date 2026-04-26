@@ -11,18 +11,32 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from polysport.data.paper_trades import summary as paper_trade_summary
+from polysport.data.snapshots import keyset_paginate
 from polysport.math.devig import devig_3way
+from polysport.strategy.moneyline import (
+    DEPTH_MIN_USD as MIN_DEPTH_USD,
+)
+from polysport.strategy.moneyline import (
+    DIVERGENCE_THRESHOLD as ENTRY_DIV_THRESHOLD,
+)
+from polysport.strategy.moneyline import (
+    FAV_PROB_MAX as MAX_FAV_PROB,
+)
+from polysport.strategy.moneyline import (
+    PINNACLE_STALENESS_MAX_SEC,
+)
+from polysport.strategy.moneyline import (
+    SPREAD_MAX as MAX_SPREAD,
+)
 
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 RECENT_WINDOW = timedelta(minutes=10)
 UPCOMING_HORIZON = timedelta(days=7)
 PAST_HORIZON = timedelta(hours=4)
 
-# STRATEGY.md entry gates, cents as floats.
-ENTRY_DIV_THRESHOLD = 0.02
-MAX_SPREAD = 0.03
-MIN_DEPTH_USD = 500.0
-MAX_FAV_PROB = 0.80
+# Strategy entry-gate thresholds are imported above from the strategy
+# module so the dashboard cannot drift away from the rule the logger
+# applies. Renamed on import to preserve the dashboard's local naming.
 
 
 @dataclass
@@ -105,38 +119,46 @@ def get_live_state(sb) -> dict:
     teams = sb.table("teams").select("id, canonical_name").execute().data
     team_name = {t["id"]: t["canonical_name"] for t in teams}
 
-    pin_rows = (
-        sb.table("odds_api_snapshots")
-        .select(
-            "home_team_id, away_team_id, commence_time, odds_home, "
-            "odds_draw, odds_away, polled_at, league_key"
-        )
-        .eq("bookmaker", "pinnacle")
-        .gte("polled_at", window_start.isoformat())
-        .gte("commence_time", horizon_past.isoformat())
-        .lte("commence_time", horizon_future.isoformat())
-        .not_.is_("home_team_id", "null")
-        .not_.is_("away_team_id", "null")
-        .not_.is_("odds_home", "null")
-        .order("polled_at", desc=True)
-        .execute()
-        .data
+    # Paginated reads. Audit 2026-04-26 flagged the previous unpaginated
+    # .execute() calls as silently capping at 1000 rows — currently safe
+    # at 6 leagues × 30s cadence × 10min window but starts dropping
+    # older rows mid-window if cadence tightens or leagues grow. Walk
+    # ASCENDING and reverse in memory so the "first key seen wins"
+    # dedup loop below still picks the latest poll per match.
+    pin_rows = keyset_paginate(
+        lambda since: (
+            sb.table("odds_api_snapshots")
+            .select(
+                "home_team_id, away_team_id, commence_time, odds_home, "
+                "odds_draw, odds_away, polled_at, league_key"
+            )
+            .eq("bookmaker", "pinnacle")
+            .gte("commence_time", horizon_past.isoformat())
+            .lte("commence_time", horizon_future.isoformat())
+            .not_.is_("home_team_id", "null")
+            .not_.is_("away_team_id", "null")
+            .not_.is_("odds_home", "null")
+            .gt("polled_at", since)
+        ),
+        cutoff_iso=window_start.isoformat(),
     )
+    pin_rows.reverse()  # latest first → first-seen wins in dedup below
 
-    pm_rows = (
-        sb.table("polymarket_snapshots")
-        .select(
-            "home_team_id, away_team_id, outcome_side, best_bid, "
-            "best_ask, best_bid_depth_usd, best_ask_depth_usd, "
-            "polled_at"
-        )
-        .gte("polled_at", window_start.isoformat())
-        .not_.is_("home_team_id", "null")
-        .not_.is_("outcome_side", "null")
-        .order("polled_at", desc=True)
-        .execute()
-        .data
+    pm_rows = keyset_paginate(
+        lambda since: (
+            sb.table("polymarket_snapshots")
+            .select(
+                "home_team_id, away_team_id, outcome_side, best_bid, "
+                "best_ask, best_bid_depth_usd, best_ask_depth_usd, "
+                "polled_at"
+            )
+            .not_.is_("home_team_id", "null")
+            .not_.is_("outcome_side", "null")
+            .gt("polled_at", since)
+        ),
+        cutoff_iso=window_start.isoformat(),
     )
+    pm_rows.reverse()  # latest first → first-seen wins in dedup below
 
     unresolved_count = (
         sb.table("unresolved_entities")
@@ -364,7 +386,7 @@ def get_live_state(sb) -> dict:
         "quota_used": quota["used"] if quota else None,
         "quota_total": quota_total,
         "quota_pct_used": quota_pct_used,
-        "pinnacle_stale_sec": 60,
+        "pinnacle_stale_sec": PINNACLE_STALENESS_MAX_SEC,
         "matches": match_rows,
         "fmt_t": _fmt_t,
         "entry_div_cents": ENTRY_DIV_THRESHOLD * 100,

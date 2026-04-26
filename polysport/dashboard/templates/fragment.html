@@ -86,7 +86,7 @@
     </div>
   </div>
 
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite">
     <div class="kpi-label">Cum. EV</div>
     <div class="kpi-value {% if pt.cumulative_ev_usd > 0 %}good{% elif pt.cumulative_ev_usd < 0 %}bad{% endif %}">
       {{ '%+.2f'|format(pt.cumulative_ev_usd) }}$
@@ -94,7 +94,7 @@
     <div class="kpi-sub">@ $5 stake · Pinnacle prior</div>
   </div>
 
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite">
     <div class="kpi-label">Best edge</div>
     <div class="kpi-value {% if pt.best_edge_cents >= state.entry_div_cents %}good{% elif pt.best_edge_cents > 0 %}caution{% endif %}">
       {{ '%+.2f'|format(pt.best_edge_cents) }}¢
@@ -102,7 +102,7 @@
   </div>
 
   {% if pt.cumulative_realized_pnl_usd is not none %}
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite">
     <div class="kpi-label">Realized PnL</div>
     <div class="kpi-value {% if pt.cumulative_realized_pnl_usd > 0 %}good{% elif pt.cumulative_realized_pnl_usd < 0 %}bad{% endif %}">
       {{ '%+.2f'|format(pt.cumulative_realized_pnl_usd) }}$
@@ -110,7 +110,7 @@
     <div class="kpi-sub">{{ pt.n_realized }} settled</div>
   </div>
   {% else %}
-  <div class="kpi">
+  <div class="kpi" role="status" aria-live="polite">
     <div class="kpi-label">Realized PnL</div>
     <div class="kpi-value">—</div>
     <div class="kpi-sub">awaiting settlement</div>

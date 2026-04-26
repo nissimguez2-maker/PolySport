@@ -25,6 +25,13 @@ load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
+# Boot marker — printed once at process start so a tail of railway logs can
+# tell whether a redeploy actually landed a fresh image (Railway can reuse
+# cached builds on git push). Mirrors the equivalent banner in
+# scripts/phase1_logger.py.
+_BOOT_SHA = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "unknown")[:12]
+print(f"PolySport dashboard starting. commit={_BOOT_SHA}", flush=True)
+
 app = FastAPI(title="PolySport Live")
 
 

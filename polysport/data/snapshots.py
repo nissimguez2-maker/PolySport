@@ -30,7 +30,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 
-def _keyset_all(
+def keyset_paginate(
     query_factory: Callable[[str], Any],
     *,
     cutoff_iso: str,
@@ -88,7 +88,7 @@ def load_pinnacle_pm_rows(
 
     cutoff_iso = (datetime.now(UTC) - timedelta(days=days_back)).isoformat()
 
-    pin_rows = _keyset_all(
+    pin_rows = keyset_paginate(
         lambda since: (
             sb.table("odds_api_snapshots")
             .select(pinnacle_columns)
@@ -101,7 +101,7 @@ def load_pinnacle_pm_rows(
         cutoff_iso=cutoff_iso,
     )
 
-    pm_rows = _keyset_all(
+    pm_rows = keyset_paginate(
         lambda since: (
             sb.table("polymarket_snapshots")
             .select(polymarket_columns)

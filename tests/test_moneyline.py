@@ -320,6 +320,44 @@ def test_position_holds_just_short_of_thresholds() -> None:
 # --- Sizing ---------------------------------------------------------------
 
 
+# --- Strategy ↔ Simulator price alignment ----------------------------------
+# Audit 2026-04-26: the strategy and simulator must compute the same maker
+# entry price. Drift here silently biases shadow PnL.
+
+
+def test_strategy_and_sim_compute_same_entry_price() -> None:
+    from polysport.sim.honest_fill import EntrySignal as SimEntrySignal
+    from polysport.sim.honest_fill import _compute_entry_price
+
+    sig = evaluate_entry(
+        _three_way(home_fair=0.55, home_bid=0.48, home_ask=0.50),
+        pinnacle_staleness_sec=10.0,
+        has_position=False,
+    )
+    assert isinstance(sig, EntrySignal)
+
+    sim_sig = SimEntrySignal(
+        match_id="test",
+        side="buy",
+        outcome_side=sig.target_outcome,
+        polymarket_mid=(0.48 + 0.50) / 2,
+        polymarket_best_ask=0.50,
+        polymarket_best_bid=0.48,
+        pinnacle_fair=0.55,
+        notional_usd=5.0,
+        t_minutes_to_kick=60.0,
+    )
+    sim_entry = _compute_entry_price(sim_sig)
+
+    assert sig.limit_price == pytest.approx(sim_entry), (
+        f"Strategy posts at {sig.limit_price}, sim fills at {sim_entry}. "
+        "These must be identical or paper_trades will record biased PnL."
+    )
+
+
+# --- Sizing ----------------------------------------------------------------
+
+
 @pytest.mark.parametrize(
     ("bankroll", "expected_stake", "expected_cap"),
     [
