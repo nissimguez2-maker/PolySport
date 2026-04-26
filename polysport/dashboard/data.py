@@ -211,7 +211,7 @@ def get_live_state(sb) -> dict:
         kt = _parse_ts(pin["commence_time"])
         polled_pin = _parse_ts(pin["polled_at"])
 
-        # Phase 1 only trades the T−120 → T−0 window. After kickoff Pinnacle
+        # Phase 1 only trades the T−180 → T−0 window. After kickoff Pinnacle
         # stops updating pre-match odds, so pin_age_sec grows unboundedly and
         # the row is not actionable. Hide them from the dashboard entirely.
         minutes_to_kick = (kt - now).total_seconds() / 60.0
@@ -284,7 +284,9 @@ def get_live_state(sb) -> dict:
         row = MatchRow(
             kickoff_local=kt.astimezone(ISRAEL_TZ).strftime("%a %d %b %H:%M"),
             minutes_to_kick=minutes_to_kick,
-            in_window=0 <= minutes_to_kick <= 120,
+            # Mirror TRADE_WINDOW_MIN in scripts/phase1_logger.py — keep them
+            # in sync if you widen one, widen the other.
+            in_window=0 <= minutes_to_kick <= 180,
             home=team_name.get(home_id, home_id[:8]),
             away=team_name.get(away_id, away_id[:8]),
             league=pin.get("league_key", ""),
@@ -300,7 +302,7 @@ def get_live_state(sb) -> dict:
 
     match_rows.sort(
         key=lambda m: (
-            0 if m.in_window else (1 if m.minutes_to_kick > 120 else 2),
+            0 if m.in_window else (1 if m.minutes_to_kick > 180 else 2),
             m.minutes_to_kick if m.minutes_to_kick >= 0 else -m.minutes_to_kick + 1e6,
         )
     )

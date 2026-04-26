@@ -106,7 +106,7 @@ POLL_INTERVAL_COARSE_SEC = int(os.getenv("POLL_INTERVAL_COARSE_SEC", "75"))
 POLL_INTERVAL_FINE_SEC = int(os.getenv("POLL_INTERVAL_FINE_SEC", "75"))
 POLL_FINE_THRESHOLD_MIN = int(os.getenv("POLL_FINE_THRESHOLD_MIN", "60"))
 
-TRADE_WINDOW_MIN = 120  # poll /events/{id}/odds only for matches kicking off within this many min
+TRADE_WINDOW_MIN = 180  # poll /events/{id}/odds only for matches kicking off within this many min
 SCHEDULE_SCAN_EVERY_SEC = 600  # free /events refresh cadence (10 min)
 QUOTA_WARN_THRESHOLD = 500  # warn once Odds API remaining drops below this
 QUOTA_HARD_FLOOR = 100  # skip paid Pinnacle calls below this (free Polymarket continues)
