@@ -24,16 +24,21 @@ Design:
 
 Cadence config (env-var overridable at the top of this file):
   POLL_INTERVAL_COARSE_SEC=60   poll interval for T-180 → T-60 matches
-  POLL_INTERVAL_FINE_SEC=30     poll interval once any match enters T-60 → kickoff
+  POLL_INTERVAL_FINE_SEC=20     poll interval once any match enters T-60 → kickoff
   POLL_FINE_THRESHOLD_MIN=60    minutes-to-kick boundary between the two bands
 
-Quota math (illustrative, 9 default leagues — 6 European top + MLS, Eredivisie,
-Primeira Liga added 2026-04-26):
-  Coarse band: 1 call / match / 60s * 120 min window-depth avg / match ≈ 120 calls.
-  Fine band overrides the final hour: that hour becomes 2 calls/min, so +60 extra.
-  Per-match spend roughly 120 + 60 = 180 credits in fully-in-window evening games.
-  At ~280 matches/month typical across 9 leagues, spend ≈ 45-55k credits/mo —
-  requires a tier above the $30/mo Starter (20k). See STRATEGY.md "Timing".
+Active-hours default (2026-04-26): always-on. The previous 14:00–22:30 IL
+window missed every MLS kickoff (02:00–05:30 IL). Always-on adds ~5–10k
+credits/month for MLS coverage, which the upgraded 100k tier accommodates.
+
+Quota math (illustrative, 9 default leagues, always-on, parallel PM fetch):
+  Coarse band: 1 call / match / 60s × 120 min coarse window ≈ 120 calls.
+  Fine band:   1 call / match / 20s × 60 min fine window   = 180 calls.
+  Halftime:    1 call / match / 20s × 15 min halftime band =  45 calls.
+  Per fully-tracked match: 120 + 180 + 45 ≈ 345 credits.
+  At ~270 matches/month across 9 leagues: ≈ 93k credits/mo — fits the
+  100k Odds API tier with ~7k buffer. Drop fine to 25s if you want
+  more headroom (~81k/mo). See STRATEGY.md "Timing".
 """
 
 from __future__ import annotations
@@ -45,6 +50,7 @@ import signal
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -64,6 +70,7 @@ from polysport.feeds.odds_api import (
     fetch_odds_for_event,
 )
 from polysport.feeds.polymarket import (
+    MoneylineMarket,
     extract_moneyline_markets,
     fetch_book,
     list_league_events,
@@ -87,8 +94,10 @@ DEFAULT_LEAGUES = [
 
 # Cadence config. Env vars win over the defaults so Railway can tune without
 # redeploying code. Tiered: coarse far from kickoff, fine in the final hour.
+# Fine cadence tightened 30s → 20s on 2026-04-26 — Polymarket book fetches
+# now run in parallel (PM_BOOK_FETCH_WORKERS), so the cycle keeps up at 20s.
 POLL_INTERVAL_COARSE_SEC = int(os.getenv("POLL_INTERVAL_COARSE_SEC", "60"))
-POLL_INTERVAL_FINE_SEC = int(os.getenv("POLL_INTERVAL_FINE_SEC", "30"))
+POLL_INTERVAL_FINE_SEC = int(os.getenv("POLL_INTERVAL_FINE_SEC", "20"))
 POLL_FINE_THRESHOLD_MIN = int(os.getenv("POLL_FINE_THRESHOLD_MIN", "60"))
 
 TRADE_WINDOW_MIN = 120  # poll /events/{id}/odds only for matches kicking off within this many min
@@ -284,6 +293,12 @@ def poll_event_odds(
     return rows, quota
 
 
+# Concurrent book fetches per cycle. The HTTP client's connection pool is
+# 20, so we cap the worker count at the same number — no point asking for
+# more concurrency than the pool can serve.
+PM_BOOK_FETCH_WORKERS = 20
+
+
 def poll_polymarket(
     sb,
     http: httpx.Client,
@@ -299,10 +314,24 @@ def poll_polymarket(
     us scope /book spend to matches that have an Odds API schedule entry —
     everything else (season markets, matches we don't track) is skipped.
 
+    Pipeline:
+      1. Parse + match events sequentially (matcher cache + Supabase
+         look-ups dominated by single-thread DB latency, parallelism
+         doesn't help).
+      2. Fetch all eligible books in parallel — this is the cycle's
+         biggest latency sink (one HTTP round-trip per market).
+      3. Write snapshots sequentially. Supabase client is requests-based
+         and fine to share, but serialising writes keeps log output
+         deterministic and dodges any per-table quotas.
+
     Returns (rows_written, events_parsed, events_matched).
     """
     events = list_league_events(http, league)
-    rows = 0
+
+    # Step 1: walk events, build a flat list of (context, market) pairs
+    # that need a book fetch. `context` carries everything the writer
+    # needs that isn't on the market itself.
+    fetch_jobs: list[tuple[dict, MoneylineMarket]] = []
     parsed = 0
     matched = 0
     for e in events:
@@ -348,47 +377,70 @@ def poll_polymarket(
         # it for analysis. Write what we have; analyze_divergence.py anchors on
         # Odds API commence_time.
         commence = _parse_iso8601(e.get("startDate") or "")
-
+        ctx = {
+            "event_id": str(e.get("id")),
+            "event_slug": e.get("slug"),
+            "home_id": home_id,
+            "away_id": away_id,
+            "commence_iso": commence.isoformat() if commence else None,
+        }
         for mkt in markets:
-            try:
-                book = fetch_book(http, mkt.yes_token_id)
-            except httpx.HTTPError as exc:
-                print(f"  [pm book {mkt.outcome_side}] {exc}", flush=True)
-                continue
-            bid_depth = (
-                book.best_bid * book.bid_size_shares
-                if book.best_bid and book.bid_size_shares
-                else None
-            )
-            ask_depth = (
-                book.best_ask * book.ask_size_shares
-                if book.best_ask and book.ask_size_shares
-                else None
-            )
+            fetch_jobs.append((ctx, mkt))
 
-            sb.table("polymarket_snapshots").insert(
-                {
-                    "event_id": str(e.get("id")),
-                    "market_id": mkt.condition_id,
-                    "outcome_raw": mkt.question,
-                    "outcome_side": mkt.outcome_side,
-                    "home_team_id": home_id,
-                    "away_team_id": away_id,
-                    "commence_time": commence.isoformat() if commence else None,
-                    "best_bid": book.best_bid,
-                    "best_ask": book.best_ask,
-                    "best_bid_depth_usd": bid_depth,
-                    "best_ask_depth_usd": ask_depth,
-                    "raw": {
-                        "event_id": e.get("id"),
-                        "event_slug": e.get("slug"),
-                        "market_slug": mkt.slug,
-                        "yes_token_id": mkt.yes_token_id,
-                        "book": book.raw,
-                    },
-                }
-            ).execute()
-            rows += 1
+    if not fetch_jobs:
+        return 0, parsed, matched
+
+    # Step 2: fetch all books concurrently. Per-job exceptions are
+    # captured into the result and logged in step 3 — one bad token
+    # shouldn't kill the whole league.
+    def _fetch(job: tuple[dict, MoneylineMarket]) -> tuple[dict, MoneylineMarket, object, object]:
+        ctx, mkt = job
+        try:
+            book = fetch_book(http, mkt.yes_token_id)
+            return ctx, mkt, book, None
+        except httpx.HTTPError as exc:
+            return ctx, mkt, None, exc
+
+    results: list[tuple[dict, MoneylineMarket, object, object]] = []
+    with ThreadPoolExecutor(max_workers=PM_BOOK_FETCH_WORKERS) as pool:
+        for fut in as_completed(pool.submit(_fetch, j) for j in fetch_jobs):
+            results.append(fut.result())
+
+    # Step 3: serial writes.
+    rows = 0
+    for ctx, mkt, book, exc in results:
+        if exc is not None:
+            print(f"  [pm book {mkt.outcome_side}] {exc}", flush=True)
+            continue
+        bid_depth = (
+            book.best_bid * book.bid_size_shares if book.best_bid and book.bid_size_shares else None
+        )
+        ask_depth = (
+            book.best_ask * book.ask_size_shares if book.best_ask and book.ask_size_shares else None
+        )
+        sb.table("polymarket_snapshots").insert(
+            {
+                "event_id": ctx["event_id"],
+                "market_id": mkt.condition_id,
+                "outcome_raw": mkt.question,
+                "outcome_side": mkt.outcome_side,
+                "home_team_id": ctx["home_id"],
+                "away_team_id": ctx["away_id"],
+                "commence_time": ctx["commence_iso"],
+                "best_bid": book.best_bid,
+                "best_ask": book.best_ask,
+                "best_bid_depth_usd": bid_depth,
+                "best_ask_depth_usd": ask_depth,
+                "raw": {
+                    "event_id": ctx["event_id"],
+                    "event_slug": ctx["event_slug"],
+                    "market_slug": mkt.slug,
+                    "yes_token_id": mkt.yes_token_id,
+                    "book": book.raw,
+                },
+            }
+        ).execute()
+        rows += 1
     return rows, parsed, matched
 
 
@@ -781,17 +833,20 @@ def main() -> int:
     parser.add_argument(
         "--active-hours-start",
         type=float,
-        default=14.0,
+        default=0.0,
         help="Hour (0–23.99, may be fractional) in --timezone at which "
-        "polling resumes. Default 14.0 (14:00) — EU evening kickoffs.",
+        "polling resumes. Default 0.0 — combined with --active-hours-end=0.0 "
+        "this is always-active (start==end ⇒ no idle window). The "
+        "always-active default exists so US-evening MLS games (~02:00–05:30 IL) "
+        "actually get polled; the previous 14:00–22:30 default missed them.",
     )
     parser.add_argument(
         "--active-hours-end",
         type=float,
-        default=22.5,
+        default=0.0,
         help="Hour (0–24, may be fractional) in --timezone at which "
-        "polling pauses. Default 22.5 (22:30). "
-        "If start==end, always active.",
+        "polling pauses. Default 0.0 — combined with start==0.0 this is "
+        "always-active. Set start≠end to enforce a quiet window.",
     )
     parser.add_argument(
         "--schedule-scan-every",
