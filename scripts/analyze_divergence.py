@@ -25,10 +25,12 @@ import argparse
 import os
 import sys
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
+from typing import Any
 
 from dotenv import load_dotenv
 from supabase import create_client
@@ -72,8 +74,36 @@ def load_data(sb) -> tuple[dict[tuple, Match], dict[str, str]]:
     teams = sb.table("teams").select("id, canonical_name").execute().data
     team_name: dict[str, str] = {t["id"]: t["canonical_name"] for t in teams}
 
-    pin_rows = (
-        sb.table("odds_api_snapshots")
+    # Paginated reads — supabase-py caps each .execute() at 1000 rows. A naive
+    # offset-pagination over polymarket_snapshots (260k+) hits PostgREST's
+    # statement_timeout. Use keyset pagination on polled_at + a 30-day window
+    # (more than enough for Phase 1's 48h sanity check).
+    cutoff = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+
+    def _keyset_all(
+        query_factory: Callable[[str], Any], ts_col: str = "polled_at", page_size: int = 1000
+    ) -> list[dict]:
+        out: list[dict] = []
+        last_ts = cutoff
+        while True:
+            rows = (
+                query_factory(last_ts)
+                .order(ts_col)
+                .limit(page_size)
+                .execute()
+                .data
+            )
+            if not rows:
+                break
+            out.extend(rows)
+            if len(rows) < page_size:
+                break
+            # Advance watermark; gt to avoid re-pulling the boundary row.
+            last_ts = rows[-1][ts_col]
+        return out
+
+    pin_rows = _keyset_all(
+        lambda since: sb.table("odds_api_snapshots")
         .select(
             "home_team_id, away_team_id, commence_time, odds_home, odds_draw, "
             "odds_away, polled_at, bookmaker"
@@ -82,21 +112,21 @@ def load_data(sb) -> tuple[dict[tuple, Match], dict[str, str]]:
         .not_.is_("home_team_id", "null")
         .not_.is_("away_team_id", "null")
         .not_.is_("odds_home", "null")
-        .execute()
-        .data
+        .gt("polled_at", since)
     )
 
-    pm_rows = (
-        sb.table("polymarket_snapshots")
+    pm_rows = _keyset_all(
+        lambda since: sb.table("polymarket_snapshots")
         .select(
             "home_team_id, away_team_id, outcome_side, best_bid, best_ask, polled_at, commence_time"
         )
         .not_.is_("home_team_id", "null")
         .not_.is_("away_team_id", "null")
         .not_.is_("outcome_side", "null")
-        .execute()
-        .data
+        .gt("polled_at", since)
     )
+
+    print(f"Loaded {len(pin_rows)} pinnacle rows, {len(pm_rows)} polymarket rows.", flush=True)
 
     # Build match index from Pinnacle (it has trustworthy kickoff).
     matches: dict[tuple, Match] = {}
@@ -303,6 +333,18 @@ def main() -> int:
             f"\n{len(not_graded)} matches have no qualifying poll yet "
             f"(outside T-120→0 window, incomplete book, or Pinnacle > {STALENESS_SEC}s stale)."
         )
+
+    # Why are polls being rejected? Aggregate skip counters across all matches.
+    total_skips = {"incomplete": 0, "stale_pinnacle": 0, "bad_book": 0, "out_of_window": 0}
+    for r in results:
+        for k, v in r["skipped"].items():
+            total_skips[k] += v
+    total_skipped = sum(total_skips.values())
+    if total_skipped:
+        print("\n--- skip reasons (aggregate across all matches) ---")
+        for reason, count in sorted(total_skips.items(), key=lambda kv: -kv[1]):
+            pct_skip = count / total_skipped * 100 if total_skipped else 0.0
+            print(f"  {reason:<18} {count:8d}  ({pct_skip:5.1f}%)")
 
     print("\n" + "-" * 78)
     print("PER-MATCH DETAIL")
