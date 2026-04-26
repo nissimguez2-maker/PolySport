@@ -27,9 +27,16 @@ end $$;
 
 -- Generated column with the hour-bucketed kickoff. STORED so the unique
 -- index can use it directly without recomputation per row.
+--
+-- Note: date_trunc('hour', timestamptz) is STABLE, not IMMUTABLE (the
+-- result depends on session timezone), so it can't drive a generated
+-- column. Casting kickoff to plain `timestamp` via `at time zone 'UTC'`
+-- yields a timezone-independent UTC wall-clock value, and
+-- date_trunc('hour', timestamp) is IMMUTABLE. The resulting column is
+-- `timestamp without time zone` carrying UTC semantics.
 alter table paper_trades
-  add column if not exists kickoff_hour timestamptz
-  generated always as (date_trunc('hour', kickoff)) stored;
+  add column if not exists kickoff_hour timestamp
+  generated always as (date_trunc('hour', kickoff at time zone 'UTC')) stored;
 
 -- The new dedup key. Same fixture across multiple poll cycles collapses
 -- to one row regardless of minute drift.
