@@ -128,6 +128,15 @@
 </div>
 
 {% if state.positions %}
+{# Position-row league pill class lookup. Position rows carry the team's
+   short league slug (e.g. "primeira"), not the Odds API sport_key the
+   matches table uses, so they need their own mapping into the pill
+   palette defined in index.html. #}
+{% set position_league_map = {
+  'epl': 'epl', 'ucl': 'ucl', 'uel': 'other',
+  'ligue1': 'l1', 'seriea': 'sa', 'laliga': 'll', 'bundesliga': 'bl',
+  'mls': 'mls', 'eredivisie': 'ere', 'primeira': 'pri'
+} %}
 <div class="matches-card">
 <div class="table-responsive">
 <table class="matches">
@@ -162,10 +171,11 @@
     {% set status_label = 'WON' if settled_won else 'LOST' %}
     {% set status_chip = 'chip-buy' if settled_won else 'chip-sell' %}
   {% endif %}
+{% set pill_class = position_league_map.get(p.league, 'other') %}
 <tr>
   <td><span class="kickoff-time">{{ decided_local }}</span></td>
   <td><span class="kickoff-time">{{ kickoff_local }}</span></td>
-  <td><span class="league league-other">{{ p.league|upper if p.league else '—' }}</span></td>
+  <td><span class="league league-{{ pill_class }}">{{ p.league|upper if p.league else '—' }}</span></td>
   <td class="match-cell">
     <span class="team-home">{{ p.home }}</span>
     <span class="vs-sep">vs</span>
@@ -187,6 +197,11 @@
   <td class="end">
     {% if p.live_pnl_usd is not none %}
       <span class="best-num {{ live_class }}">{{ '%+.2f'|format(p.live_pnl_usd) }}$</span>
+      {# Past-kickoff positions show MTM against the in-play mid, not a
+         realisable price (we hold to settlement). Hint disambiguates. #}
+      {% if p.status == 'pending_settle' %}
+        <div class="best-sub">in-play mid</div>
+      {% endif %}
     {% else %}
       <span class="muted">—</span>
     {% endif %}
@@ -215,9 +230,10 @@
 </div>
 {% endif %}
 
-{# Section bar #}
+{# Section bar — these are upcoming pre-kickoff matches in the trade window,
+   not in-play games. The dashboard data layer filters out post-kickoff rows. #}
 <div class="section-bar">
-  <h2 class="section-label">Live matches</h2>
+  <h2 class="section-label">Trade window</h2>
   <span class="section-meta">server time (IL) {{ state.now_local }} · refreshes every 15s</span>
 </div>
 
@@ -230,9 +246,9 @@
   'soccer_italy_serie_a':             ['sa',    'Serie A'],
   'soccer_spain_la_liga':             ['ll',    'La Liga'],
   'soccer_germany_bundesliga':        ['bl',    'Bundesliga'],
-  'soccer_usa_mls':                   ['other', 'MLS'],
-  'soccer_netherlands_eredivisie':    ['other', 'Eredivisie'],
-  'soccer_portugal_primeira_liga':    ['other', 'Primeira']
+  'soccer_usa_mls':                   ['mls',   'MLS'],
+  'soccer_netherlands_eredivisie':    ['ere',   'Eredivisie'],
+  'soccer_portugal_primeira_liga':    ['pri',   'Primeira']
 } %}
 <div class="matches-card">
 <div class="table-responsive">
