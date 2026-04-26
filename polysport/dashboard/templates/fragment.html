@@ -140,7 +140,7 @@
    a glance, which is the user's first question on landing. #}
 <div class="section-bar">
   <h2 class="section-label">Positions</h2>
-  <span class="section-meta">paper trades · last 30 days · live mark-to-market</span>
+  <span class="section-meta">paper trades · last 30 days · settlement-conditional PnL</span>
 </div>
 
 {% if state.positions %}
@@ -165,7 +165,11 @@
     <th scope="col">Side</th>
     <th scope="col" class="end">Entry</th>
     <th scope="col" class="end">Current</th>
-    <th scope="col" class="end">Live PnL</th>
+    {# Settlement-conditional PnL replaces the previous Live PnL column.
+       For a hold-to-settlement strategy, the realised PnL will be one
+       of these two values, not the live mid-MTM. #}
+    <th scope="col" class="end">If wins</th>
+    <th scope="col" class="end">If loses</th>
     <th scope="col" class="end">Realized PnL</th>
     <th scope="col">Status</th>
   </tr>
@@ -176,8 +180,6 @@
      macOS extension; Railway runs Linux so this is safe). #}
   {% set decided_local = p.decided_at.astimezone(state.positions_tz).strftime('%-d/%-m %H:%M') %}
   {% set kickoff_local = p.kickoff.astimezone(state.positions_tz).strftime('%-d/%-m %H:%M') %}
-  {% set live_class = 'div-pos' if p.live_pnl_usd is not none and p.live_pnl_usd > 0
-                else ('div-neg' if p.live_pnl_usd is not none and p.live_pnl_usd < 0 else 'muted') %}
   {% set realized_class = 'div-pos' if p.realized_pnl_usd is not none and p.realized_pnl_usd > 0
                      else ('div-neg' if p.realized_pnl_usd is not none and p.realized_pnl_usd < 0 else 'muted') %}
   {% if p.status == 'open' %}
@@ -213,16 +215,10 @@
     {% endif %}
   </td>
   <td class="end">
-    {% if p.live_pnl_usd is not none %}
-      <span class="best-num {{ live_class }}">{{ '%+.2f'|format(p.live_pnl_usd) }}$</span>
-      {# Past-kickoff positions show MTM against the in-play mid, not a
-         realisable price (we hold to settlement). Hint disambiguates. #}
-      {% if p.status == 'pending_settle' %}
-        <div class="best-sub">in-play mid</div>
-      {% endif %}
-    {% else %}
-      <span class="muted">—</span>
-    {% endif %}
+    <span class="best-num div-pos">{{ '%+.2f'|format(p.payout_if_wins_usd) }}$</span>
+  </td>
+  <td class="end">
+    <span class="best-num div-neg">{{ '%+.2f'|format(p.payout_if_loses_usd) }}$</span>
   </td>
   <td class="end">
     {% if p.realized_pnl_usd is not none %}

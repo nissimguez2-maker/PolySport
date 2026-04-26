@@ -48,8 +48,17 @@ class Position:
 
     `status` is derived: 'open' (kickoff in the future), 'pending_settle'
     (past kickoff, no realized PnL yet), 'settled' (realized PnL written).
-    `live_pnl_usd` is the mark-to-market on the latest Polymarket mid;
-    None when the PM snapshot is stale or absent.
+
+    Two PnL views ride along with the row:
+      `payout_if_wins_usd` / `payout_if_loses_usd` — settlement-conditional
+        outcomes. These are the right framing for a hold-to-settlement
+        strategy: the actual realised PnL will be one of these two
+        values, not the live MTM.
+      `live_pnl_usd` — mark-to-market against the current Polymarket mid.
+        Useful as a "where does the market think this is heading" gauge,
+        but optimistic (mid > bid) and not what we'll settle at. Kept
+        on the dataclass so analysis / future views can use it; the
+        dashboard renders the conditional pair as primary.
     """
 
     paper_trade_id: str
@@ -66,6 +75,8 @@ class Position:
     current_mid: float | None
     pm_snapshot_age_sec: float | None
     live_pnl_usd: float | None
+    payout_if_wins_usd: float
+    payout_if_loses_usd: float
     status: str  # 'open' | 'pending_settle' | 'settled'
     realized_pnl_usd: float | None
     settled_at: datetime | None
@@ -336,6 +347,26 @@ def list_positions(sb, *, days_back: int = 30) -> list[Position]:
             if side == "sell":
                 live_pnl = -live_pnl
 
+        # Settlement-conditional PnL. For a buy, holding `shares` of the
+        # YES token: if target wins it settles to $1 (gain = shares −
+        # notional), if it loses it settles to $0 (loss = full notional).
+        # For a sell (currently never used by strategy, kept for symmetry)
+        # the math inverts. These values are static per trade — they
+        # depend only on entry_price and notional_usd, never on the live
+        # mid — so they remain stable as the market price swings during
+        # the match.
+        if entry > 0:
+            shares = notional / entry
+            if side == "sell":
+                payout_if_wins = -(shares * 1.0 - notional)  # we owe; settling at 1.0 hurts
+                payout_if_loses = notional  # we keep notional, owe 0
+            else:
+                payout_if_wins = shares * 1.0 - notional
+                payout_if_loses = -notional
+        else:
+            payout_if_wins = 0.0
+            payout_if_loses = 0.0
+
         realized = r.get("realized_pnl")
         realized_f: float | None = float(realized) if realized is not None else None
         settled_at = _parse_ts(r.get("settled_at"))
@@ -368,6 +399,8 @@ def list_positions(sb, *, days_back: int = 30) -> list[Position]:
                 current_mid=current_mid,
                 pm_snapshot_age_sec=pm_age_sec,
                 live_pnl_usd=live_pnl,
+                payout_if_wins_usd=payout_if_wins,
+                payout_if_loses_usd=payout_if_loses,
                 status=status,
                 realized_pnl_usd=realized_f,
                 settled_at=settled_at,
