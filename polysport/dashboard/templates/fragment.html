@@ -1,26 +1,29 @@
-{# Tier 1 — the three numbers an operator actually stares at #}
+{# Tier 1 — the three numbers the operator stares at. Each label is a
+   plain-English question the operator wants answered: what should I do,
+   how good is the best chance, what's coming up. #}
 <div class="kpi-grid-primary">
   <div class="kpi" role="status" aria-live="polite" aria-atomic="true">
-    <div class="kpi-label">Would fire now</div>
+    <div class="kpi-label">Trades to place</div>
     <div class="kpi-value {% if state.n_would_fire > 0 %}good{% endif %}">
       {{ state.n_would_fire }}
     </div>
-    <div class="kpi-sub">all gates pass</div>
+    <div class="kpi-sub">passing all gates</div>
   </div>
 
   <div class="kpi">
-    <div class="kpi-label">Best gap now</div>
+    <div class="kpi-label">Best edge now</div>
     <div class="kpi-value {% if state.best_gap_cents >= state.entry_div_cents %}good{% elif state.best_gap_cents > 0 %}caution{% endif %}">
       {{ '%+.2f'|format(state.best_gap_cents) }}¢
     </div>
+    <div class="kpi-sub">need ≥ {{ '%.0f'|format(state.entry_div_cents) }}¢ to fire</div>
   </div>
 
   <div class="kpi" role="status" aria-live="polite" aria-atomic="true">
-    <div class="kpi-label">In trade window</div>
+    <div class="kpi-label">Starting soon</div>
     <div class="kpi-value {% if state.n_in_window > 0 %}caution{% endif %}">
       {{ state.n_in_window }}
     </div>
-    <div class="kpi-sub">T−120 → 0 min</div>
+    <div class="kpi-sub">kickoff in 2 hours or less</div>
   </div>
 </div>
 
@@ -34,7 +37,7 @@
   </div>
 
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Matcher</div>
+    <div class="kpi-label">Markets matched</div>
     {% set match_bad = state.n_expected > 0 and state.n_matched < state.n_expected %}
     <div class="kpi-value {% if state.n_expected == 0 %}{% elif match_bad %}caution{% else %}good{% endif %}">
       {{ state.n_matched }} / {{ state.n_expected }}
@@ -42,34 +45,40 @@
   </div>
 
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Incomplete</div>
+    <div class="kpi-label">Partial markets</div>
     <div class="kpi-value {% if state.n_incomplete_markets > 0 %}bad{% else %}good{% endif %}">
       {{ state.n_incomplete_markets }}
     </div>
   </div>
 
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Unresolved</div>
+    <div class="kpi-label">Unmapped teams</div>
     <div class="kpi-value {% if state.unresolved_count > 0 %}bad{% else %}good{% endif %}">
       {{ state.unresolved_count }}
     </div>
   </div>
 
+  {# API budget — pairs quota %used with calendar %elapsed. If used > elapsed
+     by a wide margin we're burning too fast; close to elapsed is on-pace. #}
   <div class="kpi">
-    <div class="kpi-label">Quota</div>
-    {% if state.quota_remaining is not none %}
-      {% set q_caution = state.quota_remaining < 2000 %}
-      {% set q_bad     = state.quota_remaining < 500 %}
-      <div class="kpi-value {% if q_bad %}bad{% elif q_caution %}caution{% else %}good{% endif %}">
-        {{ '{:,}'.format(state.quota_remaining) }}{% if state.quota_pct_used is not none %} · {{ '%.0f'|format(state.quota_pct_used) }}%{% endif %}
+    <div class="kpi-label">API budget</div>
+    {% if state.quota_pct_used is not none and state.month_pct_elapsed is not none %}
+      {% set pace_delta = state.quota_pct_used - state.month_pct_elapsed %}
+      {% set pace_class = 'bad' if pace_delta > 20 else ('caution' if pace_delta > 10 else 'good') %}
+      <div class="kpi-value {{ pace_class }}">
+        {{ '%.0f'|format(state.quota_pct_used) }}%
       </div>
+      <div class="kpi-sub">vs {{ '%.0f'|format(state.month_pct_elapsed) }}% of month elapsed</div>
+    {% elif state.quota_remaining is not none %}
+      <div class="kpi-value">{{ '{:,}'.format(state.quota_remaining) }}</div>
+      <div class="kpi-sub">remaining</div>
     {% else %}
       <div class="kpi-value">—</div>
     {% endif %}
   </div>
 
   <div class="kpi">
-    <div class="kpi-label">Fixtures</div>
+    <div class="kpi-label">Tracked fixtures</div>
     <div class="kpi-value">{{ state.n_matches }}</div>
   </div>
 </div>
@@ -80,14 +89,14 @@
 {% set pt = state.paper_trades %}
 <div class="kpi-strip">
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Paper trades (7d)</div>
+    <div class="kpi-label">Paper trades · 7d</div>
     <div class="kpi-value {% if pt.n_total > 0 %}good{% endif %}">
       {{ pt.n_total }}{% if pt.n_pending > 0 %} · {{ pt.n_pending }} pending{% endif %}
     </div>
   </div>
 
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Cum. EV</div>
+    <div class="kpi-label">Sum expected</div>
     <div class="kpi-value {% if pt.cumulative_ev_usd > 0 %}good{% elif pt.cumulative_ev_usd < 0 %}bad{% endif %}">
       {{ '%+.2f'|format(pt.cumulative_ev_usd) }}$
     </div>
@@ -95,7 +104,7 @@
   </div>
 
   <div class="kpi" role="status" aria-live="polite">
-    <div class="kpi-label">Best edge</div>
+    <div class="kpi-label">Best signal · 7d</div>
     <div class="kpi-value {% if pt.best_edge_cents >= state.entry_div_cents %}good{% elif pt.best_edge_cents > 0 %}caution{% endif %}">
       {{ '%+.2f'|format(pt.best_edge_cents) }}¢
     </div>
@@ -156,8 +165,10 @@
 </thead>
 <tbody>
 {% for p in state.positions %}
-  {% set decided_local = p.decided_at.astimezone(state.positions_tz).strftime('%d %b %H:%M') %}
-  {% set kickoff_local = p.kickoff.astimezone(state.positions_tz).strftime('%d %b %H:%M') %}
+  {# Compact dd/m HH:MM date format. %-d / %-m strip leading zeros (glibc /
+     macOS extension; Railway runs Linux so this is safe). #}
+  {% set decided_local = p.decided_at.astimezone(state.positions_tz).strftime('%-d/%-m %H:%M') %}
+  {% set kickoff_local = p.kickoff.astimezone(state.positions_tz).strftime('%-d/%-m %H:%M') %}
   {% set live_class = 'div-pos' if p.live_pnl_usd is not none and p.live_pnl_usd > 0
                 else ('div-neg' if p.live_pnl_usd is not none and p.live_pnl_usd < 0 else 'muted') %}
   {% set realized_class = 'div-pos' if p.realized_pnl_usd is not none and p.realized_pnl_usd > 0
@@ -186,10 +197,10 @@
       {{ p.side|upper }} {{ p.target_outcome|upper }}
     </span>
   </td>
-  <td class="end">{{ '%.3f'|format(p.entry_price) }}</td>
+  <td class="end">{{ '%.1f'|format(p.entry_price * 100) }}¢</td>
   <td class="end">
     {% if p.current_mid is not none %}
-      {{ '%.3f'|format(p.current_mid) }}
+      {{ '%.1f'|format(p.current_mid * 100) }}¢
     {% else %}
       <span class="muted">stale</span>
     {% endif %}

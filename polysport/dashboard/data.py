@@ -6,6 +6,7 @@ Window: last 10 minutes of polls, capped at 72h of upcoming matches.
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -351,6 +352,14 @@ def get_live_state(sb) -> dict:
         if quota_total > 0:
             quota_pct_used = 100.0 * quota["used"] / quota_total
 
+    # Month-elapsed % for the API budget tile. Pairing it with quota_pct_used
+    # lets the operator tell at a glance whether burn is on-pace: ratios near
+    # 1.0 mean spending matches calendar; ratios > 1 mean over-budget pace.
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    seconds_in_month = days_in_month * 86400
+    month_pct_elapsed = 100.0 * (now - month_start).total_seconds() / seconds_in_month
+
     # Paper-trade tape: 7d running total of strategy-fired entries with
     # their EV under Pinnacle prior. This is the "how am I doing" panel —
     # a paper PnL feedback loop while we accumulate Phase 1 data.
@@ -394,6 +403,7 @@ def get_live_state(sb) -> dict:
         "quota_used": quota["used"] if quota else None,
         "quota_total": quota_total,
         "quota_pct_used": quota_pct_used,
+        "month_pct_elapsed": month_pct_elapsed,
         "pinnacle_stale_sec": PINNACLE_STALENESS_MAX_SEC,
         "matches": match_rows,
         "fmt_t": _fmt_t,
